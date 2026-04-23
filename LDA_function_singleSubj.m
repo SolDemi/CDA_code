@@ -1,0 +1,341 @@
+function [Acc4TrainSet, predictAcc, weights, AUC] = LDA_function_singleSubj(data, labels, time, cfg)
+% LDA_FUNCTION_SINGLESUBJ
+% Time-resolved binary LDA decoding for single-subject data.
+%
+% INPUT
+%   data   : features x time x trials
+%   labels : trials x 1
+%   time : 1 x time or time x 1 vector
+%   cfg    : struct with decoding configuration
+
+%
+% OPTIONAL CFG FIELDS
+%   cfg.nFolds            : number of folds for CV (default = 10)
+%   cfg.nIter             : number of random repetitions (default = 30)
+%   cfg.avgNTrials        : average N trials into one supertrial (default = 1)
+%   cfg.doPCA             : true/false (default = false)
+%   cfg.nPCs              : number of PCs to keep (default = [])
+%   cfg.pcaVarianceToKeep : percent variance, e.g. 95 (default = [])
+%   cfg.zscore            : z-score features using training set only (default = false)
+%   cfg.binSize           : temporal window size (default = 1)
+%   cfg.binUnit           : 'samples' or 'ms' (default = 'samples')
+%   cfg.discrimType       : e.g. 'diagLinear' (default = 'diagLinear')
+%   cfg.seed              : random seed (default = [])
+%
+% OUTPUT
+%   Acc4TrainSet : 1 x time, mean training accuracy
+%   predictAcc   : 1 x time, mean test accuracy
+%   weights      : features x time, mean LDA weights in original feature space
+%   AUC          : 1 x time, mean test AUC
+%
+% NOTE
+%   This version performs same-time train/test decoding only.
+%   It currently supports binary classification.
+
+    % ---------------------------
+    % Check inputs
+    % ---------------------------
+    if ndims(data) ~= 3
+        error('Input data must be features x time x trials.');
+    end
+
+    labels = labels(:);
+    [nFeat, nTime, nTrials] = size(data);
+
+    if numel(labels) ~= nTrials
+        error('Number of labels must match size(data,3).');
+    end
+
+
+
+    time = time(:)';
+    if numel(time) ~= nTime
+        error('Length of cfg.time must equal size(data,2).');
+    end
+
+    classes = unique(labels);
+    if numel(classes) ~= 2
+        error('This function currently supports binary classification only.');
+    end
+
+    % ---------------------------
+    % Defaults
+    % ---------------------------
+    cfg = set_default_cfg(cfg, 'nFolds', 10);
+    cfg = set_default_cfg(cfg, 'nIter', 30);
+    cfg = set_default_cfg(cfg, 'avgNTrials', 1);
+    cfg = set_default_cfg(cfg, 'doPCA', false);
+    cfg = set_default_cfg(cfg, 'nPCs', []);
+    cfg = set_default_cfg(cfg, 'pcaVarianceToKeep', []);
+    cfg = set_default_cfg(cfg, 'zscore', false);
+    cfg = set_default_cfg(cfg, 'binSize', 1);
+    cfg = set_default_cfg(cfg, 'binUnit', 'samples');
+    cfg = set_default_cfg(cfg, 'discrimType', 'diagLinear');
+    cfg = set_default_cfg(cfg, 'seed', []);
+
+    if ~isempty(cfg.seed)
+        rng(cfg.seed);
+    end
+
+    % ---------------------------
+    % Preallocate
+    % ---------------------------
+    trainAcc_all = nan(cfg.nIter, nTime);
+    testAcc_all  = nan(cfg.nIter, nTime);
+    auc_all      = nan(cfg.nIter, nTime);
+
+    weights_sum   = zeros(nFeat, nTime);
+    weights_count = zeros(1, nTime);
+
+    posClass = max(classes);
+
+    % ---------------------------
+    % Main loop
+    % ---------------------------
+    for t = 1:nTime
+        % Get trial x feature matrix for this time point / time window
+        X_full = extract_time_slice(data, time, t, cfg);  % trials x features
+
+        for it = 1:cfg.nIter
+            % Build balanced data (and supertrials if requested)
+            [X, y] = build_balanced_supertrials(X_full, labels, cfg.avgNTrials);
+
+            % Skip if too few samples
+            classCounts = arrayfun(@(c) sum(y == c), unique(y));
+            minClassN = min(classCounts);
+
+            kfold = min(cfg.nFolds, minClassN);
+            if kfold < 2
+                continue;
+            end
+
+            cvp = cvpartition(y, 'KFold', kfold);
+
+            foldTrainAcc = nan(cvp.NumTestSets, 1);
+            foldTestAcc  = nan(cvp.NumTestSets, 1);
+            foldAUC      = nan(cvp.NumTestSets, 1);
+            foldWeights  = nan(nFeat, cvp.NumTestSets);
+
+            parfor f = 1:cvp.NumTestSets
+                trIdx = training(cvp, f);
+                teIdx = test(cvp, f);
+
+                Xtr = X(trIdx, :);
+                Xte = X(teIdx, :);
+                ytr = y(trIdx);
+                yte = y(teIdx);
+
+                % ---------------------------
+                % Z-score using training data only
+                % ---------------------------
+                sigma_z = ones(1, size(Xtr,2));
+                if cfg.zscore
+                    mu_z = mean(Xtr, 1);
+                    sigma_z = std(Xtr, 0, 1);
+                    sigma_z(sigma_z == 0) = 1;
+
+                    Xtr = (Xtr - mu_z) ./ sigma_z;
+                    Xte = (Xte - mu_z) ./ sigma_z;
+                end
+
+                % ---------------------------
+                % PCA using training data only
+                % ---------------------------
+                coeff = [];
+                nKeep = [];
+                if cfg.doPCA
+                    [coeff, scoreTr, ~, ~, explained, mu_pca] = pca(Xtr);
+
+                    if ~isempty(cfg.nPCs)
+                        nKeep = min(cfg.nPCs, size(scoreTr,2));
+                    elseif ~isempty(cfg.pcaVarianceToKeep)
+                        nKeep = find(cumsum(explained) >= cfg.pcaVarianceToKeep, 1, 'first');
+                        nKeep = min(nKeep, size(scoreTr,2));
+                    else
+                        nKeep = min(size(scoreTr,2), size(Xtr,1)-1);
+                    end
+
+                    Xtr_use = scoreTr(:, 1:nKeep);
+                    Xte_use = (Xte - mu_pca) * coeff(:, 1:nKeep);
+                else
+                    Xtr_use = Xtr;
+                    Xte_use = Xte;
+                end
+
+                % ---------------------------
+                % Fit LDA
+                % ---------------------------
+                mdl = fitcdiscr(Xtr_use, ytr, 'DiscrimType', cfg.discrimType);
+
+                % Predict
+                [yhat_tr, ~] = predict(mdl, Xtr_use);
+                [yhat_te, score_te] = predict(mdl, Xte_use);
+
+                foldTrainAcc(f) = mean(yhat_tr == ytr);
+                foldTestAcc(f)  = mean(yhat_te == yte);
+
+                % ---------------------------
+                % AUC
+                % ---------------------------
+                try
+                    posCol = find(mdl.ClassNames == posClass, 1, 'first');
+                    [~, ~, ~, foldAUC(f)] = perfcurve(yte, score_te(:, posCol), posClass);
+                catch
+                    foldAUC(f) = NaN;
+                end
+
+                % ---------------------------
+                % Recover weights in original feature space
+                % ---------------------------
+                w_use = local_diaglda_weights(Xtr_use, ytr, mdl.ClassNames);
+
+                if cfg.doPCA
+                    w_orig = coeff(:, 1:nKeep) * w_use;
+                else
+                    w_orig = w_use;
+                end
+
+                if cfg.zscore
+                    w_orig = w_orig ./ sigma_z(:);
+                end
+
+                foldWeights(:, f) = w_orig;
+            end
+
+            trainAcc_all(it, t) = mean(foldTrainAcc, 'omitnan');
+            testAcc_all(it, t)  = mean(foldTestAcc,  'omitnan');
+            auc_all(it, t)      = mean(foldAUC,      'omitnan');
+
+            goodFold = ~all(isnan(foldWeights), 1);
+            if any(goodFold)
+                weights_sum(:, t) = weights_sum(:, t) + mean(foldWeights(:, goodFold), 2, 'omitnan');
+                weights_count(t) = weights_count(t) + 1;
+            end
+        end
+    end
+
+    % ---------------------------
+    % Final outputs
+    % ---------------------------
+    Acc4TrainSet = mean(trainAcc_all, 1, 'omitnan');
+    predictAcc   = mean(testAcc_all,  1, 'omitnan');
+    AUC          = mean(auc_all,      1, 'omitnan');
+
+    weights = nan(nFeat, nTime);
+    validT = weights_count > 0;
+    weights(:, validT) = weights_sum(:, validT) ./ weights_count(validT);
+
+end
+
+
+% =========================================================================
+% Helper functions
+% =========================================================================
+
+function cfg = set_default_cfg(cfg, fieldName, defaultValue)
+    if ~isfield(cfg, fieldName) || isempty(cfg.(fieldName))
+        cfg.(fieldName) = defaultValue;
+    end
+end
+
+function X = extract_time_slice(data, time, tIdx, cfg)
+% Return trials x features for one time point or one temporal window.
+
+    switch lower(cfg.binUnit)
+        case 'samples'
+            halfW = floor((cfg.binSize - 1) / 2);
+            idx1 = max(1, tIdx - halfW);
+            idx2 = min(numel(time), tIdx + halfW);
+            tidx = idx1:idx2;
+
+        case 'ms'
+            halfW = cfg.binSize / 2;
+            t0 = time(tIdx);
+            tidx = find(time >= (t0 - halfW) & time <= (t0 + halfW));
+            if isempty(tidx)
+                tidx = tIdx;
+            end
+
+        otherwise
+            error('cfg.binUnit must be ''samples'' or ''ms''.');
+    end
+
+    tmp = squeeze(mean(data(:, tidx, :), 2));  % features x trials
+    if isvector(tmp)
+        tmp = reshape(tmp, [], size(data,3));
+    end
+    X = tmp';  % trials x features
+end
+
+function [Xout, yout] = build_balanced_supertrials(X, y, avgNTrials)
+% X: trials x features
+% y: trials x 1
+
+    classes = unique(y);
+    nClass = numel(classes);
+
+    classCounts = zeros(nClass,1);
+    for i = 1:nClass
+        classCounts(i) = sum(y == classes(i));
+    end
+
+    minN = min(classCounts);
+    nUse = floor(minN / avgNTrials) * avgNTrials;
+
+    if nUse < avgNTrials
+        error('Not enough trials after balancing/supertrial averaging.');
+    end
+
+    nSuper = nUse / avgNTrials;
+
+    Xcell = cell(nClass,1);
+    ycell = cell(nClass,1);
+
+    for i = 1:nClass
+        idx = find(y == classes(i));
+        idx = idx(randperm(numel(idx)));
+        idx = idx(1:nUse);
+
+        Xi = X(idx, :);  % nUse x features
+
+        if avgNTrials > 1
+            Xi = reshape(Xi, avgNTrials, nSuper, size(X,2));
+            Xi = squeeze(mean(Xi, 1));  % nSuper x features
+            if isvector(Xi)
+                Xi = reshape(Xi, nSuper, []);
+            end
+        end
+
+        Xcell{i} = Xi;
+        ycell{i} = repmat(classes(i), size(Xi,1), 1);
+    end
+
+    Xout = vertcat(Xcell{:});
+    yout = vertcat(ycell{:});
+end
+
+function w = local_diaglda_weights(X, y, classNames)
+% Recover binary diagonal-LDA weights in the feature space of X.
+% Output is a column vector: features x 1
+
+    c1 = classNames(1);
+    c2 = classNames(2);
+
+    X1 = X(y == c1, :);
+    X2 = X(y == c2, :);
+
+    mu1 = mean(X1, 1);
+    mu2 = mean(X2, 1);
+
+    v1 = var(X1, 0, 1);
+    v2 = var(X2, 0, 1);
+
+    n1 = size(X1,1);
+    n2 = size(X2,1);
+
+    pooledVar = ((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2);
+    pooledVar(pooledVar <= eps) = eps;
+
+    % Weight direction: positive values favor class c2 relative to c1
+    w = ((mu2 - mu1) ./ pooledVar)';
+end
