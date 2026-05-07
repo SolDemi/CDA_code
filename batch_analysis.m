@@ -1,5 +1,5 @@
 % batch_analysis
-
+cd D:\projects\CDA\code
 % calculate cda、alpha（原始数据基线-200ms，无法提取alpha频段，所以重新修改基线至-1000ms）
 cda_alpha
 
@@ -16,4 +16,4 @@ LDA_decoding
 plot_SVM_result
 
 
-job
+% job

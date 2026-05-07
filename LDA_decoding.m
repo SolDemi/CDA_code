@@ -48,7 +48,7 @@ for s = numel(files):-1:1
     CDA.testACC = predictAcc;
     CDA.weights = weights;
     CDA.AUC = AUC;
-    save([outputdir 'CDA\' file '_10SuperTrials.mat'], "CDA")
+    save([outputdir 'CDA\' erase(file,'.mat') '_10SuperTrials.mat'], "CDA")
 
     % % decode load based on alpha band
     % data2 = cat( 1, alpha.trial.diff_2(:,:,201:end), alpha.trial.diff_6(:,:,201:end) ); % trials x channels x time

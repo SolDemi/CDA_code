@@ -39,6 +39,11 @@ function [Acc4TrainSet, predictAcc, weights, AUC] = LDA_function_singleSubj(data
         error('Input data must be features x time x trials.');
     end
 
+    if cfg.binSize > 0
+        [data, time] = apply_temporal_smoothing(data, time, cfg.binSize);
+    end
+
+
     labels = labels(:);
     [nFeat, nTime, nTrials] = size(data);
 
@@ -89,12 +94,14 @@ function [Acc4TrainSet, predictAcc, weights, AUC] = LDA_function_singleSubj(data
 
     posClass = max(classes);
 
+
+
     % ---------------------------
     % Main loop
     % ---------------------------
     for t = 1:nTime
-        % Get trial x feature matrix for this time point / time window
-        X_full = extract_time_slice(data, time, t, cfg);  % trials x features
+
+        X_full = squeeze( data(:,t,:) )';
 
         for it = 1:cfg.nIter
             % Build balanced data (and supertrials if requested)
@@ -238,33 +245,26 @@ function cfg = set_default_cfg(cfg, fieldName, defaultValue)
     end
 end
 
-function X = extract_time_slice(data, time, tIdx, cfg)
-% Return trials x features for one time point or one temporal window.
+function [eegData_smoothed, times_out] = apply_temporal_smoothing(eegData, times, smooth_window)
 
-    switch lower(cfg.binUnit)
-        case 'samples'
-            halfW = floor((cfg.binSize - 1) / 2);
-            idx1 = max(1, tIdx - halfW);
-            idx2 = min(numel(time), tIdx + halfW);
-            tidx = idx1:idx2;
+half_window = smooth_window / 2;
+validMask = (times - half_window >= times(1)) & (times + half_window <= times(end));
 
-        case 'ms'
-            halfW = cfg.binSize / 2;
-            t0 = time(tIdx);
-            tidx = find(time >= (t0 - halfW) & time <= (t0 + halfW));
-            if isempty(tidx)
-                tidx = tIdx;
-            end
+if ~any(validMask)
+    error('No valid time points remain after smoothing. smooth_window is too large.');
+end
 
-        otherwise
-            error('cfg.binUnit must be ''samples'' or ''ms''.');
-    end
+validIdx = find(validMask);
+eegData_smoothed = zeros(size(eegData,1), numel(validIdx), size(eegData,3), 'like', eegData);
 
-    tmp = squeeze(mean(data(:, tidx, :), 2));  % features x trials
-    if isvector(tmp)
-        tmp = reshape(tmp, [], size(data,3));
-    end
-    X = tmp';  % trials x features
+for ii = 1:numel(validIdx)
+    t = validIdx(ii);
+    winIdx = times >= (times(t)-half_window) & times <= (times(t)+half_window);
+    eegData_smoothed(:,ii,:) = mean(eegData(:,winIdx,:), 2);
+end
+
+times_out = times(validMask);
+
 end
 
 function [Xout, yout] = build_balanced_supertrials(X, y, avgNTrials)
