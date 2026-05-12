@@ -29,6 +29,7 @@ function result = SVM_function_confusion_singleSubj(eegData, labels, times, cfg)
 %   cfg.standardize           : true/false, default = true
 %   cfg.verbose               : true/false, default = true
 %   cfg.randomSeed            : numeric scalar or [], default = []
+%   cfg.useParallel           : true/false, use parfor over trainTime, default = false
 %
 % OUTPUT
 %   result.predictAcc         : nTimeOut x nTimeOut
@@ -47,6 +48,8 @@ function result = SVM_function_confusion_singleSubj(eegData, labels, times, cfg)
 %   - smooth_window and smooth_step must use the same unit as times.
 %     For example, if times is in ms, use 500 and 50.
 %     If times is in seconds, use 0.5 and 0.05.
+%   - This version is parfor-safe. Inside parfor, each worker writes to local
+%     variables first, then assigns a full row/slice back to the output arrays.
 
 %% =========================
 % 0. Input check
@@ -152,82 +155,38 @@ for sampi = 1:cfg.nIter
         trainY = allLabels(trainIdx);
         testY  = allLabels(testIdx);
 
-        for trainTime = 1:nTime
+        if cfg.useParallel
+            % -------------------------------------------------------------
+            % parfor-safe implementation:
+            % Each trainTime produces a complete row of predictAcc/AUC and
+            % a local weight vector. We only assign back once per trainTime.
+            % -------------------------------------------------------------
+            parfor trainTime = 1:nTime
 
-            Xtrain = squeeze(allTrials(:,trainTime,trainIdx))';  % nTrain x nCh
-            if isvector(Xtrain)
-                Xtrain = reshape(Xtrain, sum(trainIdx), nCh);
+                [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time( ...
+                    allTrials, allLabels, trainIdx, testIdx, trainY, testY, ...
+                    trainTime, nTime, nCh, cfg);
+
+                predictAcc_all(trainTime,:,foldi,sampi) = accRow;
+                AUC_all(trainTime,:,foldi,sampi)        = aucRow;
+                trainAcc_all(foldi,trainTime,sampi)     = trainAccVal;
+                weights_all(:,trainTime,foldi,sampi)    = weightVec;
             end
+        else
+            for trainTime = 1:nTime
 
-            % ----- PCA on training data only -----
-            coeff = [];
-            mu    = [];
+                [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time( ...
+                    allTrials, allLabels, trainIdx, testIdx, trainY, testY, ...
+                    trainTime, nTime, nCh, cfg);
 
-            if cfg.doPCA
-                [coeff, Xtrain, mu] = fit_pca_train_only(Xtrain, cfg.nPCs);
-            end
+                predictAcc_all(trainTime,:,foldi,sampi) = accRow;
+                AUC_all(trainTime,:,foldi,sampi)        = aucRow;
+                trainAcc_all(foldi,trainTime,sampi)     = trainAccVal;
+                weights_all(:,trainTime,foldi,sampi)    = weightVec;
 
-            % ----- Train SVM -----
-            svmModel = fitcsvm( ...
-                Xtrain, trainY, ...
-                'KernelFunction', cfg.kernelFunction, ...
-                'Standardize',    cfg.standardize, ...
-                'KernelScale',    'auto');
-
-            % ----- Save weights if linear -----
-            if strcmpi(cfg.kernelFunction, 'linear') && ...
-                    isprop(svmModel, 'Beta') && ~isempty(svmModel.Beta)
-
-                if cfg.doPCA
-                    weights_all(:,trainTime,foldi,sampi) = coeff * svmModel.Beta;
-                else
-                    weights_all(:,trainTime,foldi,sampi) = svmModel.Beta;
-                end
-            end
-
-            % ----- Training accuracy -----
-            labelTrain = predict(svmModel, Xtrain);
-            trainAcc_all(foldi,trainTime,sampi) = mean(labelTrain == trainY);
-
-            % ----- Test -----
-            if cfg.doTimeGeneralization
-                testTimes = 1:nTime;
-            else
-                testTimes = trainTime;
-            end
-
-            for testTime = testTimes
-                Xtest = squeeze(allTrials(:,testTime,testIdx))';  % nTest x nCh
-                if isvector(Xtest)
-                    Xtest = reshape(Xtest, sum(testIdx), nCh);
-                end
-
-                if cfg.doPCA
-                    Xtest = apply_pca_to_test(Xtest, coeff, mu);
-                end
-
-                [labelTest, score] = predict(svmModel, Xtest);
-                predictAcc_all(trainTime,testTime,foldi,sampi) = mean(labelTest == testY);
-
-                % ----- AUC -----
-                if size(score,2) >= 2
-                    trueLabels = (testY == 2);
-                    scorePos   = score(:,2);
-
-                    if numel(unique(trueLabels)) == 2
-                        [~,~,~,aucVal] = perfcurve(trueLabels, scorePos, 1);
-                    else
-                        aucVal = NaN;
-                    end
-                else
-                    aucVal = NaN;
-                end
-
-                AUC_all(trainTime,testTime,foldi,sampi) = aucVal;
-            end
-
-            if cfg.verbose
-                fprintf('.');
+                % if cfg.verbose
+                %     fprintf('.');
+                % end
             end
         end
     end
@@ -268,6 +227,107 @@ result.classLabelsOriginal  = uLabels;
 end
 
 %% ========================================================================
+function [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time( ...
+    allTrials, allLabels, trainIdx, testIdx, trainY, testY, trainTime, nTime, nCh, cfg)
+% Decode one training time point.
+%
+% This helper is written so that the outer trainTime loop can be safely
+% parallelized with parfor. It returns complete row vectors instead of
+% assigning to predictAcc_all(trainTime,testTime,...) inside a nested loop.
+
+% Preallocate local outputs.
+accRow       = nan(1, nTime);
+aucRow       = nan(1, nTime);
+trainAccVal  = NaN;
+weightVec    = nan(nCh, 1);
+
+% ----- Training data -----
+Xtrain = squeeze(allTrials(:, trainTime, trainIdx))';  % nTrain x nCh
+
+if isvector(Xtrain)
+    Xtrain = reshape(Xtrain, sum(trainIdx), nCh);
+end
+
+% ----- PCA on training data only -----
+coeff = [];
+mu    = [];
+
+if cfg.doPCA
+    [coeff, Xtrain, mu] = fit_pca_train_only(Xtrain, cfg.nPCs);
+end
+
+% ----- Train SVM -----
+svmModel = fitcsvm( ...
+    Xtrain, trainY, ...
+    'KernelFunction', cfg.kernelFunction, ...
+    'Standardize',    cfg.standardize, ...
+    'KernelScale',    'auto');
+
+% ----- Save weights if linear -----
+if strcmpi(cfg.kernelFunction, 'linear') && ...
+        isprop(svmModel, 'Beta') && ~isempty(svmModel.Beta)
+
+    if cfg.doPCA
+        weightVec = coeff * svmModel.Beta;
+    else
+        weightVec = svmModel.Beta;
+    end
+end
+
+% ----- Training accuracy -----
+labelTrain  = predict(svmModel, Xtrain);
+trainAccVal = mean(labelTrain == trainY);
+
+% ----- Define test times -----
+if cfg.doTimeGeneralization
+    testTimes = 1:nTime;
+else
+    testTimes = trainTime;
+end
+
+% ----- Test -----
+for testTime = testTimes
+
+    Xtest = squeeze(allTrials(:, testTime, testIdx))';  % nTest x nCh
+
+    if isvector(Xtest)
+        Xtest = reshape(Xtest, sum(testIdx), nCh);
+    end
+
+    if cfg.doPCA
+        Xtest = apply_pca_to_test(Xtest, coeff, mu);
+    end
+
+    [labelTest, score] = predict(svmModel, Xtest);
+    accRow(testTime) = mean(labelTest == testY);
+
+    % ----- AUC -----
+    if size(score,2) >= 2
+        trueLabels = (testY == 2);
+        scorePos   = score(:,2);
+
+        if numel(unique(trueLabels)) == 2
+            [~,~,~,aucVal] = perfcurve(trueLabels, scorePos, 1);
+        else
+            aucVal = NaN;
+        end
+    else
+        aucVal = NaN;
+    end
+
+    aucRow(testTime) = aucVal;
+end
+
+% allLabels is intentionally kept in the signature for clarity and future
+% extensions, although it is not used in this binary-SVM implementation.
+if false
+    %#ok<UNRCH>
+    disp(allLabels);
+end
+
+end
+
+%% ========================================================================
 function cfg = fill_default_cfg(cfg)
 
 if ~isfield(cfg,'nFolds'),               cfg.nFolds = 10; end
@@ -282,6 +342,7 @@ if ~isfield(cfg,'kernelFunction'),       cfg.kernelFunction = 'linear'; end
 if ~isfield(cfg,'standardize'),          cfg.standardize = true; end
 if ~isfield(cfg,'verbose'),              cfg.verbose = true; end
 if ~isfield(cfg,'randomSeed'),           cfg.randomSeed = []; end
+if ~isfield(cfg,'useParallel'),          cfg.useParallel = false; end
 
 validateattributes(cfg.nFolds,      {'numeric'}, {'scalar','integer','>=',2});
 validateattributes(cfg.superTrial,  {'numeric'}, {'scalar','integer','>=',1});
@@ -292,6 +353,7 @@ validateattributes(cfg.smooth_window, {'numeric'}, {'scalar','>=',0});
 validateattributes(cfg.doTimeGeneralization, {'numeric','logical'}, {'scalar'});
 validateattributes(cfg.standardize, {'numeric','logical'}, {'scalar'});
 validateattributes(cfg.verbose,     {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.useParallel, {'numeric','logical'}, {'scalar'});
 
 if ~isempty(cfg.smooth_step)
     validateattributes(cfg.smooth_step, {'numeric'}, {'scalar','>',0});
@@ -463,7 +525,7 @@ if maxPC < 1
 end
 
 [coeff, score, ~, ~, ~, mu] = pca(Xtrain);
-coeff     = coeff(:,1:maxPC);
+coeff      = coeff(:,1:maxPC);
 Xtrain_pca = score(:,1:maxPC);
 
 end
