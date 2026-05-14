@@ -131,7 +131,7 @@ for s = 1:length(subjects)
             continue;
         end
 
-        win = (erp.eventTimes(ec) - erp.pre_timepoint) : (erp.eventTimes(ec) + erp.post_timepoint);
+        win = (erp.eventTimes(ec) - 50) : (erp.eventTimes(ec) + erp.post_timepoint);
 
         % Skip epochs exceeding data bounds
         if win(1) < 1 || win(end) > nPnts

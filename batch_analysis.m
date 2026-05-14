@@ -15,5 +15,6 @@ LDA_decoding
 % plot SVM result
 plot_SVM_result
 
+stat_plot
 
 % job

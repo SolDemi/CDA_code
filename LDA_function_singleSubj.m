@@ -1,341 +1,561 @@
-function [Acc4TrainSet, predictAcc, weights, AUC] = LDA_function_singleSubj(data, labels, time, cfg)
-% LDA_FUNCTION_SINGLESUBJ
-% Time-resolved binary LDA decoding for single-subject data.
+function result = LDA_function_singleSubj(eegData, labels, times, cfg)
+% LDA_function_singleSubj
+%
+% Time-resolved / time-generalization binary LDA decoding for single-subject
+% EEG/iEEG data. The interface and output format are intentionally matched
+% to SVM_function_confusion_singleSubj.m.
 %
 % INPUT
-%   data   : features x time x trials
-%   labels : trials x 1
-%   time : 1 x time or time x 1 vector
-%   cfg    : struct with decoding configuration
-
+%   eegData : nCh x nTime x nTrials
+%   labels  : nTrials x 1, binary class labels. Original labels are stored
+%             in result.classLabelsOriginal, but internal labels are 1/2.
+%   times   : 1 x nTime or nTime x 1, same unit as smooth_window/smooth_step
+%   cfg     : struct
 %
-% OPTIONAL CFG FIELDS
-%   cfg.nFolds            : number of folds for CV (default = 10)
-%   cfg.nIter             : number of random repetitions (default = 30)
-%   cfg.avgNTrials        : average N trials into one supertrial (default = 1)
-%   cfg.doPCA             : true/false (default = false)
-%   cfg.nPCs              : number of PCs to keep (default = [])
-%   cfg.pcaVarianceToKeep : percent variance, e.g. 95 (default = [])
-%   cfg.zscore            : z-score features using training set only (default = false)
-%   cfg.binSize           : temporal window size (default = 1)
-%   cfg.binUnit           : 'samples' or 'ms' (default = 'samples')
-%   cfg.discrimType       : e.g. 'diagLinear' (default = 'diagLinear')
-%   cfg.seed              : random seed (default = [])
+% COMMON CFG FIELDS
+%   cfg.nFolds               : number of CV folds, default = 10
+%   cfg.superTrial           : number of trials averaged into one supertrial,
+%                              default = 1
+%   cfg.nIter                : number of random resampling runs, default = 1
+%   cfg.doPCA                : true/false, default = false
+%   cfg.nPCs                 : number of PCs if doPCA = true, default = 5
+%   cfg.smooth_window        : temporal smoothing window size in same unit as
+%                              times, default = 0. If 0, no averaging.
+%   cfg.smooth_step          : step size between adjacent output time points,
+%                              default = []. If [], every valid time point is
+%                              used. If smooth_window = 0 and smooth_step > 0,
+%                              only temporal downsampling is applied.
+%   cfg.doTimeGeneralization : true/false, default = true
+%   cfg.discrimType          : fitcdiscr DiscrimType, default = 'diagLinear'
+%   cfg.standardize          : z-score features using training set only,
+%                              default = false
+%   cfg.verbose              : true/false, default = true
+%   cfg.randomSeed           : numeric scalar or [], default = []
+%   cfg.useParallel          : true/false, use parfor over trainTime,
+%                              default = false
+%
+% BACKWARD-COMPATIBLE CFG ALIASES
+%   cfg.avgNTrials -> cfg.superTrial
+%   cfg.binSize    -> cfg.smooth_window
+%   cfg.seed       -> cfg.randomSeed
+%   cfg.zscore     -> cfg.standardize
 %
 % OUTPUT
-%   Acc4TrainSet : 1 x time, mean training accuracy
-%   predictAcc   : 1 x time, mean test accuracy
-%   weights      : features x time, mean LDA weights in original feature space
-%   AUC          : 1 x time, mean test AUC
+%   result.predictAcc           : nTimeOut x nTimeOut
+%   result.AUC                  : nTimeOut x nTimeOut
+%   result.predictAccTrain      : nTimeOut x 1
+%   result.weights              : nCh x nTimeOut
+%   result.times                : processed time vector
+%   result.cfg                  : full config used
+%   result.classLabelsOriginal  : original class labels
 %
-% NOTE
-%   This version performs same-time train/test decoding only.
-%   It currently supports binary classification.
+% NOTES
+%   - Output matrices are always nTimeOut x nTimeOut.
+%   - If doTimeGeneralization = false, only the diagonal is filled; off-
+%     diagonal entries are NaN.
+%   - PCA and standardization are fitted on training data only within each
+%     fold/time point, avoiding train-test leakage.
+%   - weights are returned in the original channel/feature space when PCA
+%     and/or standardization are used.
 
-    % ---------------------------
-    % Check inputs
-    % ---------------------------
-    if ndims(data) ~= 3
-        error('Input data must be features x time x trials.');
+%% =========================
+% 0. Input check
+% ==========================
+if nargin < 4
+    cfg = struct();
+end
+
+validateattributes(eegData, {'numeric'}, {'nonempty','3d'}, mfilename, 'eegData', 1);
+validateattributes(labels,  {'numeric','logical'}, {'nonempty','vector'}, mfilename, 'labels', 2);
+validateattributes(times,   {'numeric'}, {'nonempty','vector'}, mfilename, 'times', 3);
+validateattributes(cfg,     {'struct'}, {'scalar'}, mfilename, 'cfg', 4);
+
+labels = labels(:);
+times  = times(:)';
+[nCh, nTime, nTrials] = size(eegData);
+
+if numel(labels) ~= nTrials
+    error('Number of labels (%d) must equal number of trials in eegData (%d).', numel(labels), nTrials);
+end
+if numel(times) ~= nTime
+    error('Length of times (%d) must equal size(eegData,2) (%d).', numel(times), nTime);
+end
+
+uLabels = unique(labels);
+if numel(uLabels) ~= 2
+    error('This version currently supports binary classification only. Found %d unique labels.', numel(uLabels));
+end
+
+%% =========================
+% 1. Default cfg
+% ==========================
+cfg = fill_default_cfg(cfg);
+
+if ~isempty(cfg.randomSeed)
+    rng(cfg.randomSeed);
+end
+
+%% =========================
+% 2. Optional temporal smoothing / stepping
+% ==========================
+if cfg.smooth_window > 0 || ~isempty(cfg.smooth_step)
+    [eegData, times] = apply_temporal_smoothing(eegData, times, cfg.smooth_window, cfg.smooth_step);
+end
+[nCh, nTime, ~] = size(eegData);
+
+%% =========================
+% 3. Relabel to 1 / 2 internally
+% ==========================
+labels_internal = zeros(size(labels));
+labels_internal(labels == uLabels(1)) = 1;
+labels_internal(labels == uLabels(2)) = 2;
+
+idx1 = labels_internal == 1;
+idx2 = labels_internal == 2;
+
+data1 = eegData(:,:,idx1);
+data2 = eegData(:,:,idx2);
+
+n1 = size(data1,3);
+n2 = size(data2,3);
+if min(n1,n2) < cfg.nFolds
+    error('At least one class has fewer trials than nFolds. class1=%d, class2=%d, nFolds=%d', n1, n2, cfg.nFolds);
+end
+
+%% =========================
+% 4. Preallocate
+% ==========================
+predictAcc_all = nan(nTime, nTime, cfg.nFolds, cfg.nIter);
+AUC_all        = nan(nTime, nTime, cfg.nFolds, cfg.nIter);
+trainAcc_all   = nan(cfg.nFolds, nTime, cfg.nIter);
+weights_all    = nan(nCh, nTime, cfg.nFolds, cfg.nIter);
+
+%% =========================
+% 5. Main loop
+% ==========================
+for sampi = 1:cfg.nIter
+
+    % ----- Supertrials, separately within each class -----
+    if cfg.superTrial > 1
+        dataSup1 = make_supertrials(data1, cfg.superTrial);
+        dataSup2 = make_supertrials(data2, cfg.superTrial);
+    else
+        dataSup1 = data1;
+        dataSup2 = data2;
     end
 
-    if cfg.binSize > 0
-        [data, time] = apply_temporal_smoothing(data, time, cfg.binSize);
+    allTrials = cat(3, dataSup1, dataSup2);
+    allLabels = [ones(size(dataSup1,3),1); 2*ones(size(dataSup2,3),1)];
+
+    if min([sum(allLabels==1), sum(allLabels==2)]) < cfg.nFolds
+        error(['After supertrial averaging, at least one class has fewer samples ' ...
+               'than nFolds. class1=%d, class2=%d, nFolds=%d'], ...
+               sum(allLabels==1), sum(allLabels==2), cfg.nFolds);
     end
 
+    % Stratified CV
+    CVO = cvpartition(allLabels, 'KFold', cfg.nFolds);
 
-    labels = labels(:);
-    [nFeat, nTime, nTrials] = size(data);
+    for foldi = 1:cfg.nFolds
+        trainIdx = training(CVO, foldi);
+        testIdx  = test(CVO, foldi);
 
-    if numel(labels) ~= nTrials
-        error('Number of labels must match size(data,3).');
-    end
+        trainY = allLabels(trainIdx);
+        testY  = allLabels(testIdx);
 
+        if cfg.useParallel
+            parfor trainTime = 1:nTime
+                [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time_lda( ...
+                    allTrials, trainIdx, testIdx, trainY, testY, ...
+                    trainTime, nTime, nCh, cfg);
 
-
-    time = time(:)';
-    if numel(time) ~= nTime
-        error('Length of cfg.time must equal size(data,2).');
-    end
-
-    classes = unique(labels);
-    if numel(classes) ~= 2
-        error('This function currently supports binary classification only.');
-    end
-
-    % ---------------------------
-    % Defaults
-    % ---------------------------
-    cfg = set_default_cfg(cfg, 'nFolds', 10);
-    cfg = set_default_cfg(cfg, 'nIter', 30);
-    cfg = set_default_cfg(cfg, 'avgNTrials', 1);
-    cfg = set_default_cfg(cfg, 'doPCA', false);
-    cfg = set_default_cfg(cfg, 'nPCs', []);
-    cfg = set_default_cfg(cfg, 'pcaVarianceToKeep', []);
-    cfg = set_default_cfg(cfg, 'zscore', false);
-    cfg = set_default_cfg(cfg, 'binSize', 1);
-    cfg = set_default_cfg(cfg, 'binUnit', 'samples');
-    cfg = set_default_cfg(cfg, 'discrimType', 'diagLinear');
-    cfg = set_default_cfg(cfg, 'seed', []);
-
-    if ~isempty(cfg.seed)
-        rng(cfg.seed);
-    end
-
-    % ---------------------------
-    % Preallocate
-    % ---------------------------
-    trainAcc_all = nan(cfg.nIter, nTime);
-    testAcc_all  = nan(cfg.nIter, nTime);
-    auc_all      = nan(cfg.nIter, nTime);
-
-    weights_sum   = zeros(nFeat, nTime);
-    weights_count = zeros(1, nTime);
-
-    posClass = max(classes);
-
-
-
-    % ---------------------------
-    % Main loop
-    % ---------------------------
-    for t = 1:nTime
-
-        X_full = squeeze( data(:,t,:) )';
-
-        for it = 1:cfg.nIter
-            % Build balanced data (and supertrials if requested)
-            [X, y] = build_balanced_supertrials(X_full, labels, cfg.avgNTrials);
-
-            % Skip if too few samples
-            classCounts = arrayfun(@(c) sum(y == c), unique(y));
-            minClassN = min(classCounts);
-
-            kfold = min(cfg.nFolds, minClassN);
-            if kfold < 2
-                continue;
+                predictAcc_all(trainTime,:,foldi,sampi) = accRow;
+                AUC_all(trainTime,:,foldi,sampi)        = aucRow;
+                trainAcc_all(foldi,trainTime,sampi)     = trainAccVal;
+                weights_all(:,trainTime,foldi,sampi)    = weightVec;
             end
+        else
+            for trainTime = 1:nTime
+                [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time_lda( ...
+                    allTrials, trainIdx, testIdx, trainY, testY, ...
+                    trainTime, nTime, nCh, cfg);
 
-            cvp = cvpartition(y, 'KFold', kfold);
-
-            foldTrainAcc = nan(cvp.NumTestSets, 1);
-            foldTestAcc  = nan(cvp.NumTestSets, 1);
-            foldAUC      = nan(cvp.NumTestSets, 1);
-            foldWeights  = nan(nFeat, cvp.NumTestSets);
-
-            parfor f = 1:cvp.NumTestSets
-                trIdx = training(cvp, f);
-                teIdx = test(cvp, f);
-
-                Xtr = X(trIdx, :);
-                Xte = X(teIdx, :);
-                ytr = y(trIdx);
-                yte = y(teIdx);
-
-                % ---------------------------
-                % Z-score using training data only
-                % ---------------------------
-                sigma_z = ones(1, size(Xtr,2));
-                if cfg.zscore
-                    mu_z = mean(Xtr, 1);
-                    sigma_z = std(Xtr, 0, 1);
-                    sigma_z(sigma_z == 0) = 1;
-
-                    Xtr = (Xtr - mu_z) ./ sigma_z;
-                    Xte = (Xte - mu_z) ./ sigma_z;
-                end
-
-                % ---------------------------
-                % PCA using training data only
-                % ---------------------------
-                coeff = [];
-                nKeep = [];
-                if cfg.doPCA
-                    [coeff, scoreTr, ~, ~, explained, mu_pca] = pca(Xtr);
-
-                    if ~isempty(cfg.nPCs)
-                        nKeep = min(cfg.nPCs, size(scoreTr,2));
-                    elseif ~isempty(cfg.pcaVarianceToKeep)
-                        nKeep = find(cumsum(explained) >= cfg.pcaVarianceToKeep, 1, 'first');
-                        nKeep = min(nKeep, size(scoreTr,2));
-                    else
-                        nKeep = min(size(scoreTr,2), size(Xtr,1)-1);
-                    end
-
-                    Xtr_use = scoreTr(:, 1:nKeep);
-                    Xte_use = (Xte - mu_pca) * coeff(:, 1:nKeep);
-                else
-                    Xtr_use = Xtr;
-                    Xte_use = Xte;
-                end
-
-                % ---------------------------
-                % Fit LDA
-                % ---------------------------
-                mdl = fitcdiscr(Xtr_use, ytr, 'DiscrimType', cfg.discrimType);
-
-                % Predict
-                [yhat_tr, ~] = predict(mdl, Xtr_use);
-                [yhat_te, score_te] = predict(mdl, Xte_use);
-
-                foldTrainAcc(f) = mean(yhat_tr == ytr);
-                foldTestAcc(f)  = mean(yhat_te == yte);
-
-                % ---------------------------
-                % AUC
-                % ---------------------------
-                try
-                    posCol = find(mdl.ClassNames == posClass, 1, 'first');
-                    [~, ~, ~, foldAUC(f)] = perfcurve(yte, score_te(:, posCol), posClass);
-                catch
-                    foldAUC(f) = NaN;
-                end
-
-                % ---------------------------
-                % Recover weights in original feature space
-                % ---------------------------
-                w_use = local_diaglda_weights(Xtr_use, ytr, mdl.ClassNames);
-
-                if cfg.doPCA
-                    w_orig = coeff(:, 1:nKeep) * w_use;
-                else
-                    w_orig = w_use;
-                end
-
-                if cfg.zscore
-                    w_orig = w_orig ./ sigma_z(:);
-                end
-
-                foldWeights(:, f) = w_orig;
-            end
-
-            trainAcc_all(it, t) = mean(foldTrainAcc, 'omitnan');
-            testAcc_all(it, t)  = mean(foldTestAcc,  'omitnan');
-            auc_all(it, t)      = mean(foldAUC,      'omitnan');
-
-            goodFold = ~all(isnan(foldWeights), 1);
-            if any(goodFold)
-                weights_sum(:, t) = weights_sum(:, t) + mean(foldWeights(:, goodFold), 2, 'omitnan');
-                weights_count(t) = weights_count(t) + 1;
+                predictAcc_all(trainTime,:,foldi,sampi) = accRow;
+                AUC_all(trainTime,:,foldi,sampi)        = aucRow;
+                trainAcc_all(foldi,trainTime,sampi)     = trainAccVal;
+                weights_all(:,trainTime,foldi,sampi)    = weightVec;
             end
         end
     end
 
-    % ---------------------------
-    % Final outputs
-    % ---------------------------
-    Acc4TrainSet = mean(trainAcc_all, 1, 'omitnan');
-    predictAcc   = mean(testAcc_all,  1, 'omitnan');
-    AUC          = mean(auc_all,      1, 'omitnan');
-
-    weights = nan(nFeat, nTime);
-    validT = weights_count > 0;
-    weights(:, validT) = weights_sum(:, validT) ./ weights_count(validT);
-
-end
-
-
-% =========================================================================
-% Helper functions
-% =========================================================================
-
-function cfg = set_default_cfg(cfg, fieldName, defaultValue)
-    if ~isfield(cfg, fieldName) || isempty(cfg.(fieldName))
-        cfg.(fieldName) = defaultValue;
+    if cfg.verbose
+        fprintf(' sample %d/%d done\n', sampi, cfg.nIter);
     end
 end
 
-function [eegData_smoothed, times_out] = apply_temporal_smoothing(eegData, times, smooth_window)
+%% =========================
+% 6. Average across folds and iterations
+% ==========================
+predictAcc = mean(predictAcc_all, [3 4], 'omitnan');
+AUC        = mean(AUC_all,        [3 4], 'omitnan');
+weights    = mean(weights_all,    [3 4], 'omitnan');
+trainAcc   = squeeze(mean(trainAcc_all, [1 3], 'omitnan'))';
 
-half_window = smooth_window / 2;
-validMask = (times - half_window >= times(1)) & (times + half_window <= times(end));
-
-if ~any(validMask)
-    error('No valid time points remain after smoothing. smooth_window is too large.');
+%% =========================
+% 7. If no TG, keep only diagonal and off-diagonal NaN
+% ==========================
+if ~cfg.doTimeGeneralization
+    predictAcc = keep_diagonal_only(predictAcc);
+    AUC        = keep_diagonal_only(AUC);
 end
 
-validIdx = find(validMask);
-eegData_smoothed = zeros(size(eegData,1), numel(validIdx), size(eegData,3), 'like', eegData);
+%% =========================
+% 8. Pack output
+% ==========================
+result = struct();
+result.predictAcc          = predictAcc;
+result.AUC                 = AUC;
+result.predictAccTrain     = trainAcc(:);
+result.weights             = weights;
+result.times               = times(:);
+result.cfg                 = cfg;
+result.classLabelsOriginal = uLabels;
 
-for ii = 1:numel(validIdx)
-    t = validIdx(ii);
-    winIdx = times >= (times(t)-half_window) & times <= (times(t)+half_window);
-    eegData_smoothed(:,ii,:) = mean(eegData(:,winIdx,:), 2);
 end
 
-times_out = times(validMask);
+%% ========================================================================
+function [accRow, aucRow, trainAccVal, weightVec] = decode_one_train_time_lda( ...
+    allTrials, trainIdx, testIdx, trainY, testY, trainTime, nTime, nCh, cfg)
+% Decode one training time point. The helper returns complete row vectors so
+% that the trainTime loop can be safely parallelized with parfor.
 
+accRow      = nan(1, nTime);
+aucRow      = nan(1, nTime);
+trainAccVal = NaN;
+weightVec   = nan(nCh, 1);
+
+% ----- Training data -----
+Xtrain = squeeze(allTrials(:, trainTime, trainIdx))';  % nTrain x nCh
+if isvector(Xtrain)
+    Xtrain = reshape(Xtrain, sum(trainIdx), nCh);
 end
 
-function [Xout, yout] = build_balanced_supertrials(X, y, avgNTrials)
-% X: trials x features
-% y: trials x 1
+% ----- Standardize on training data only -----
+mu_z = [];
+sigma_z = [];
+if cfg.standardize
+    [Xtrain, mu_z, sigma_z] = zscore_train_only(Xtrain);
+end
 
-    classes = unique(y);
-    nClass = numel(classes);
+% ----- PCA on training data only -----
+coeff = [];
+mu_pca = [];
+if cfg.doPCA
+    [coeff, Xtrain, mu_pca] = fit_pca_train_only(Xtrain, cfg.nPCs);
+end
 
-    classCounts = zeros(nClass,1);
-    for i = 1:nClass
-        classCounts(i) = sum(y == classes(i));
+% ----- Train LDA -----
+ldaModel = fitcdiscr(Xtrain, trainY, 'DiscrimType', cfg.discrimType);
+
+% ----- Save weights in original feature space -----
+w_use = estimate_lda_weights(Xtrain, trainY, ldaModel, cfg.discrimType);
+if cfg.doPCA
+    weightVec = coeff * w_use;
+else
+    weightVec = w_use;
+end
+if cfg.standardize
+    weightVec = weightVec ./ sigma_z(:);
+end
+
+% ----- Training accuracy -----
+labelTrain = predict(ldaModel, Xtrain);
+trainAccVal = mean(labelTrain == trainY);
+
+% ----- Define test times -----
+if cfg.doTimeGeneralization
+    testTimes = 1:nTime;
+else
+    testTimes = trainTime;
+end
+
+% ----- Test -----
+for testTime = testTimes
+    Xtest = squeeze(allTrials(:, testTime, testIdx))';  % nTest x nCh
+    if isvector(Xtest)
+        Xtest = reshape(Xtest, sum(testIdx), nCh);
     end
 
-    minN = min(classCounts);
-    nUse = floor(minN / avgNTrials) * avgNTrials;
-
-    if nUse < avgNTrials
-        error('Not enough trials after balancing/supertrial averaging.');
+    if cfg.standardize
+        Xtest = apply_zscore_to_test(Xtest, mu_z, sigma_z);
     end
 
-    nSuper = nUse / avgNTrials;
+    if cfg.doPCA
+        Xtest = apply_pca_to_test(Xtest, coeff, mu_pca);
+    end
 
-    Xcell = cell(nClass,1);
-    ycell = cell(nClass,1);
+    [labelTest, score] = predict(ldaModel, Xtest);
+    accRow(testTime) = mean(labelTest == testY);
 
-    for i = 1:nClass
-        idx = find(y == classes(i));
-        idx = idx(randperm(numel(idx)));
-        idx = idx(1:nUse);
-
-        Xi = X(idx, :);  % nUse x features
-
-        if avgNTrials > 1
-            Xi = reshape(Xi, avgNTrials, nSuper, size(X,2));
-            Xi = squeeze(mean(Xi, 1));  % nSuper x features
-            if isvector(Xi)
-                Xi = reshape(Xi, nSuper, []);
-            end
+    % ----- AUC. Internal positive class is class 2. -----
+    try
+        posClass = 2;
+        posCol = find(ldaModel.ClassNames == posClass, 1, 'first');
+        if isempty(posCol)
+            aucVal = NaN;
+        elseif numel(unique(testY)) == 2
+            [~,~,~,aucVal] = perfcurve(testY, score(:,posCol), posClass);
+        else
+            aucVal = NaN;
         end
-
-        Xcell{i} = Xi;
-        ycell{i} = repmat(classes(i), size(Xi,1), 1);
+    catch
+        aucVal = NaN;
     end
-
-    Xout = vertcat(Xcell{:});
-    yout = vertcat(ycell{:});
+    aucRow(testTime) = aucVal;
 end
 
-function w = local_diaglda_weights(X, y, classNames)
-% Recover binary diagonal-LDA weights in the feature space of X.
-% Output is a column vector: features x 1
+end
 
-    c1 = classNames(1);
-    c2 = classNames(2);
+%% ========================================================================
+function cfg = fill_default_cfg(cfg)
+% Backward-compatible aliases from the old LDA_function_singleSubj.m.
+if isfield(cfg,'avgNTrials') && ~isfield(cfg,'superTrial')
+    cfg.superTrial = cfg.avgNTrials;
+end
+if isfield(cfg,'binSize') && ~isfield(cfg,'smooth_window')
+    cfg.smooth_window = cfg.binSize;
+end
+if isfield(cfg,'seed') && ~isfield(cfg,'randomSeed')
+    cfg.randomSeed = cfg.seed;
+end
+if isfield(cfg,'zscore') && ~isfield(cfg,'standardize')
+    cfg.standardize = cfg.zscore;
+end
 
-    X1 = X(y == c1, :);
-    X2 = X(y == c2, :);
+if ~isfield(cfg,'nFolds'),               cfg.nFolds = 10; end
+if ~isfield(cfg,'superTrial'),           cfg.superTrial = 1; end
+if ~isfield(cfg,'nIter'),                cfg.nIter = 1; end
+if ~isfield(cfg,'doPCA'),                cfg.doPCA = false; end
+if ~isfield(cfg,'nPCs'),                 cfg.nPCs = 5; end
+if ~isfield(cfg,'smooth_window'),        cfg.smooth_window = 0; end
+if ~isfield(cfg,'smooth_step'),          cfg.smooth_step = []; end
+if ~isfield(cfg,'doTimeGeneralization'), cfg.doTimeGeneralization = true; end
+if ~isfield(cfg,'discrimType'),          cfg.discrimType = 'diagLinear'; end
+if ~isfield(cfg,'standardize'),          cfg.standardize = false; end
+if ~isfield(cfg,'verbose'),              cfg.verbose = true; end
+if ~isfield(cfg,'randomSeed'),           cfg.randomSeed = []; end
+if ~isfield(cfg,'useParallel'),          cfg.useParallel = false; end
 
-    mu1 = mean(X1, 1);
-    mu2 = mean(X2, 1);
+validateattributes(cfg.nFolds, {'numeric'}, {'scalar','integer','>=',2});
+validateattributes(cfg.superTrial, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.nIter, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.doPCA, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.nPCs, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.smooth_window, {'numeric'}, {'scalar','>=',0});
+validateattributes(cfg.doTimeGeneralization, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.standardize, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.verbose, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.useParallel, {'numeric','logical'}, {'scalar'});
 
-    v1 = var(X1, 0, 1);
-    v2 = var(X2, 0, 1);
+if ~isempty(cfg.smooth_step)
+    validateattributes(cfg.smooth_step, {'numeric'}, {'scalar','>',0});
+end
+if ~ischar(cfg.discrimType) && ~isstring(cfg.discrimType)
+    error('cfg.discrimType must be a char or string.');
+end
+end
 
+%% ========================================================================
+function [eegData_out, times_out] = apply_temporal_smoothing(eegData, times, smooth_window, smooth_step)
+% Apply temporal smoothing with optional step size.
+%
+% INPUT
+%   eegData       : nCh x nTime x nTrials
+%   times         : 1 x nTime
+%   smooth_window : window size, same unit as times. If 0, no averaging.
+%   smooth_step   : step size between adjacent output time points. If [],
+%                   every valid time point is used as output center.
+%
+% OUTPUT
+%   eegData_out : nCh x nOutputTime x nTrials
+%   times_out   : output time vector corresponding to window centers
+
+times = times(:)';
+if nargin < 4
+    smooth_step = [];
+end
+validateattributes(smooth_window, {'numeric'}, {'scalar','>=',0});
+if ~isempty(smooth_step)
+    validateattributes(smooth_step, {'numeric'}, {'scalar','>',0});
+end
+
+if smooth_window == 0 && isempty(smooth_step)
+    eegData_out = eegData;
+    times_out = times;
+    return;
+end
+
+if smooth_window > 0
+    half_window = smooth_window / 2;
+    center_min = times(1) + half_window;
+    center_max = times(end) - half_window;
+    if center_min > center_max
+        error('No valid time points remain. smooth_window is too large for the current time range.');
+    end
+    validCenterIdx = find(times >= center_min & times <= center_max);
+else
+    validCenterIdx = 1:numel(times);
+end
+if isempty(validCenterIdx)
+    error('No valid output time points were found.');
+end
+
+if isempty(smooth_step)
+    centerIdx = validCenterIdx;
+else
+    targetTimes = times(validCenterIdx(1)) : smooth_step : times(validCenterIdx(end));
+    if isempty(targetTimes)
+        targetTimes = times(validCenterIdx(1));
+    end
+    centerIdx = nan(size(targetTimes));
+    for ii = 1:numel(targetTimes)
+        [~, nearestPos] = min(abs(times(validCenterIdx) - targetTimes(ii)));
+        centerIdx(ii) = validCenterIdx(nearestPos);
+    end
+    centerIdx = unique(centerIdx, 'stable');
+end
+
+nCh = size(eegData, 1);
+nTrials = size(eegData, 3);
+nOut = numel(centerIdx);
+eegData_out = zeros(nCh, nOut, nTrials, 'like', eegData);
+
+if smooth_window > 0
+    half_window = smooth_window / 2;
+    for ii = 1:nOut
+        tIdx = centerIdx(ii);
+        centerTime = times(tIdx);
+        winIdx = times >= (centerTime - half_window) & times <= (centerTime + half_window);
+        eegData_out(:, ii, :) = mean(eegData(:, winIdx, :), 2);
+    end
+else
+    eegData_out = eegData(:, centerIdx, :);
+end
+
+times_out = times(centerIdx);
+end
+
+%% ========================================================================
+function dataSup = make_supertrials(data, superTrial)
+% Randomly average trials within each class to create supertrials.
+%
+% INPUT
+%   data       : nCh x nTime x nTrials
+%   superTrial : number of raw trials averaged into one supertrial
+%
+% OUTPUT
+%   dataSup : nCh x nTime x nSuperTrials
+
+[nCh, nTime, nTrials] = size(data);
+if superTrial <= 1
+    dataSup = data;
+    return;
+end
+
+nSuperTrials = floor(nTrials / superTrial);
+if nSuperTrials < 1
+    error('Not enough trials (%d) to create supertrials with superTrial = %d.', nTrials, superTrial);
+end
+
+randIdx = randperm(nTrials);
+randIdx = randIdx(1:nSuperTrials * superTrial);
+
+dataSup = zeros(nCh, nTime, nSuperTrials, 'like', data);
+for si = 1:nSuperTrials
+    useIdx = randIdx((si-1)*superTrial + 1 : si*superTrial);
+    dataSup(:,:,si) = mean(data(:,:,useIdx), 3);
+end
+end
+
+%% ========================================================================
+function [Xz, mu_z, sigma_z] = zscore_train_only(X)
+mu_z = mean(X, 1, 'omitnan');
+sigma_z = std(X, 0, 1, 'omitnan');
+sigma_z(sigma_z == 0 | isnan(sigma_z)) = 1;
+Xz = (X - mu_z) ./ sigma_z;
+end
+
+%% ========================================================================
+function Xz = apply_zscore_to_test(X, mu_z, sigma_z)
+Xz = (X - mu_z) ./ sigma_z;
+end
+
+%% ========================================================================
+function [coeff, Xtrain_pca, mu] = fit_pca_train_only(Xtrain, nPCs)
+[nObs, nFeat] = size(Xtrain);
+maxPC = min([nObs-1, nFeat, nPCs]);
+if maxPC < 1
+    error('Not enough training observations/features for PCA.');
+end
+[coeff, score, ~, ~, ~, mu] = pca(Xtrain);
+coeff = coeff(:,1:maxPC);
+Xtrain_pca = score(:,1:maxPC);
+end
+
+%% ========================================================================
+function Xtest_pca = apply_pca_to_test(Xtest, coeff, mu)
+Xtest_pca = (Xtest - mu) * coeff;
+end
+
+%% ========================================================================
+function w = estimate_lda_weights(X, y, mdl, discrimType)
+% Return a binary LDA discriminant vector in the current feature space.
+% Positive weights favor class 2 relative to class 1.
+
+% First try MATLAB's model coefficient. This works for standard two-class
+% discriminant models and is consistent with the fitted model.
+try
+    if numel(mdl.ClassNames) == 2 && isfield(mdl.Coeffs(1,2), 'Linear')
+        w = mdl.Coeffs(1,2).Linear;
+        w = w(:);
+        if numel(w) == size(X,2)
+            return;
+        end
+    end
+catch
+end
+
+% Fallback: manually estimate the discriminant vector. This is especially
+% transparent for diagLinear.
+c1 = mdl.ClassNames(1);
+c2 = mdl.ClassNames(2);
+X1 = X(y == c1, :);
+X2 = X(y == c2, :);
+mu1 = mean(X1, 1);
+mu2 = mean(X2, 1);
+
+if strcmpi(discrimType, 'linear')
+    S1 = cov(X1);
+    S2 = cov(X2);
     n1 = size(X1,1);
     n2 = size(X2,1);
-
-    pooledVar = ((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2);
-    pooledVar(pooledVar <= eps) = eps;
-
-    % Weight direction: positive values favor class c2 relative to c1
+    pooledCov = ((n1 - 1) * S1 + (n2 - 1) * S2) / max(n1 + n2 - 2, 1);
+    pooledCov = pooledCov + eye(size(pooledCov)) * eps;
+    w = pinv(pooledCov) * (mu2 - mu1)';
+else
+    v1 = var(X1, 0, 1);
+    v2 = var(X2, 0, 1);
+    n1 = size(X1,1);
+    n2 = size(X2,1);
+    pooledVar = ((n1 - 1) * v1 + (n2 - 1) * v2) / max(n1 + n2 - 2, 1);
+    pooledVar(pooledVar <= eps | isnan(pooledVar)) = eps;
     w = ((mu2 - mu1) ./ pooledVar)';
+end
+end
+
+%% ========================================================================
+function M = keep_diagonal_only(M)
+diagVals = diag(M);
+M(:) = NaN;
+M(1:size(M,1)+1:end) = diagVals;
 end

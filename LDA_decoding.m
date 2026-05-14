@@ -2,7 +2,23 @@ clear,clc
 maindir = erase(pwd,'code');
 datadir = [maindir 'cda_alpha\'];
 outputdir = [maindir 'decoding_LDA\'];
-% create folders
+
+%% config
+cfg = struct();
+cfg.nFolds = 10;
+cfg.superTrial = 1;
+cfg.nIter = 1;
+cfg.smooth_window = 50;
+cfg.smooth_step = [];
+cfg.doTimeGeneralization = true;
+cfg.doPCA = false;
+cfg.nPCs = 5;
+cfg.discrimType = 'diagLinear';
+cfg.standardize = false;
+cfg.useParallel = true;
+
+CDA = LDA_function_singleSubj(data, labels, cda.time, cfg);
+%% create folders
 for i = 1:4
     switch i
         case 1, tmp_name = 'CDA';
@@ -16,15 +32,6 @@ for i = 1:4
 end
 
 
-cfg.nFolds = 10;
-cfg.avgNTrials = 10;
-cfg.nIter = 1;
-cfg.binSize = 50;
-cfg.binUnit = 'ms';
-cfg.doPCA = false;
-cfg.zscore = false;
-cfg.discrimType = 'diagLinear';
-time = -200:4:996;
 
 files = dir([datadir 'sub*']);
 for s = numel(files):-1:1
@@ -43,11 +50,8 @@ for s = numel(files):-1:1
     data1  = cat( 1, cda.trial.diff_2(:,:,201:end), cda.trial.diff_6(:,:,201:end) ); % trials x channels x time
     data1  = permute(data1, [2,3,1]);
     % decode load based on CDA
-    [Acc4TrainSet, predictAcc, weights, AUC] = LDA_function_singleSubj(data1, labels, time, cfg);
-    CDA.trainACC = Acc4TrainSet;
-    CDA.testACC = predictAcc;
-    CDA.weights = weights;
-    CDA.AUC = AUC;
+    CDA = LDA_function_singleSubj(data, labels, cda.time, cfg);
+
     save([outputdir 'CDA\' erase(file,'.mat') '_10SuperTrials.mat'], "CDA")
 
     % % decode load based on alpha band
