@@ -17,7 +17,7 @@ subjects = [1:8,10:18,20:26,28:34,36:47,49:52,54:63,65:68,70,73:74,...
 
 % Load example file 
 maindir = erase( pwd,'\code');
-outputdir = [maindir,'\decoding\OSF_CDA\'];
+outputdir = [maindir,'\decoding_LDA\OSF_CDA\'];
 if ~isfolder(outputdir)
     mkdir(outputdir)
 end
@@ -60,15 +60,32 @@ rightElecLabels = {'O2','OR','P4','PO4','T6'};
 leftIdx  = get_channel_indices(erp.allChans, leftElecLabels);
 rightIdx = get_channel_indices(erp.allChans, rightElecLabels);
 
-cfg.nFolds = 10;
-cfg.avgNTrials = 2;
-cfg.nIter = 1;
-cfg.binSize = 50;
-cfg.binUnit = 'ms';
+%% config
+cfg = struct();
+cfg.cvType = 'holdout';        % 'holdout' reproduces 2/3 train, 1/3 test style
+cfg.trainRatio = 2/3;
+cfg.nFolds = 3;                % only used when cfg.cvType = 'kfold'
+cfg.superTrial = 1;
+cfg.nIter = 100;
+
+cfg.smooth_window = 50;
+cfg.smooth_step = 50;
+cfg.timeWindowMode = 'bin';    % article-style 50-ms bins
+
+cfg.doTimeGeneralization = false;
 cfg.doPCA = false;
-cfg.zscore = false;
+cfg.nPCs = 5;
 cfg.discrimType = 'diagLinear';
-time = -200:4:996;
+cfg.standardize = false;
+
+cfg.doShuffle = true;          % shuffled TRAINING labels empirical chance
+cfg.balanceTrials = true;      % balance classes each iteration
+cfg.balanceNPerCell = [];
+cfg.balanceFactors = [];
+
+cfg.useParallel = true;
+cfg.verbose = 0;
+cfg.randomSeed = [];
 
 for s = 1:nSubs
     %% Load subject
@@ -103,13 +120,11 @@ for s = 1:nSubs
         ones(size(erp.trial.R_C2,1),1)*2; ones(size(erp.trial.R_C6,1),1)*6; ...
         ones(size(erp.trial.R_S2,1),1)*2; ones(size(erp.trial.R_S6,1),1)*6; ];
 
-    [~, predictAcc, weights, AUC] = LDA_function_singleSubj(tempDat, labels, time, cfg);
+    CDA = LDA_function_singleSubj(tempDat, labels, cda.time, cfg);
 
-     CDA.testACC = predictAcc;
-     CDA.weights = weights;
-     CDA.AUC = AUC;
 
-     save(['D:\projects\CDA\decoding\OSF_LDA_CDA\' sprintf( 'sub%d.mat',subjects(s) )], 'CDA')
+
+     save([outputdir sprintf( 'sub%d.mat',subjects(s) )], 'CDA')
 
     % Loop through timepoints
     % for b = 1:nBins

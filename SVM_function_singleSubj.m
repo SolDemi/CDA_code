@@ -1,31 +1,63 @@
-function result = LDA_function_singleSubj(eegData, labels, times, cfg)
-% LDA_function_singleSubj
-% Lightweight time-resolved / time-generalization binary LDA decoding.
+function result = SVM_function_singleSubj(eegData, labels, times, cfg)
+% SVM_function_singleSubj
+% Lightweight time-resolved / time-generalization binary SVM decoding.
 %
-% Required external functions on MATLAB path:
-%   balance_trials_by_label.m   % optional trial balancing
-%   func_make_superTrials.m     % optional supertrial averaging
+% This version follows the interface and loop structure of
+% LDA_function_singleSubj:
+%   - cfg.cvType = 'holdout' or 'kfold'
+%   - cfg.trainRatio for holdout
+%   - cfg.nFolds for kfold
+%   - cfg.nIter random iterations
+%   - cfg.doShuffle shuffled-training-label baseline
+%   - cfg.balanceTrials optional trial balancing
+%   - cfg.useParallel parfor over cfg.nIter, not over time
+%   - same output field names as LDA_function_singleSubj
 %
-% Key cfg fields:
-%   cfg.cvType      : 'holdout' or 'kfold'              default = 'kfold'
-%   cfg.trainRatio  : training proportion for holdout   default = 2/3
-%   cfg.nFolds      : K for kfold                       default = 10
-%   cfg.nIter       : random iterations                 default = 1
-%   cfg.doShuffle   : shuffled-training-label baseline  default = false
+% Required input:
+%   eegData : nCh x nTime x nTrials
+%   labels  : nTrials x 1, binary labels
+%   times   : 1 x nTime or nTime x 1
+%   cfg     : struct
+%
+% Key cfg fields shared with LDA_function_singleSubj:
+%   cfg.cvType       : 'holdout' or 'kfold'              default = 'kfold'
+%   cfg.trainRatio   : training proportion for holdout   default = 2/3
+%   cfg.nFolds       : K for kfold                       default = 10
+%   cfg.nIter        : random iterations                 default = 1
+%   cfg.doShuffle    : shuffled-training-label baseline  default = false
 %   cfg.balanceTrials: downsample classes each iter      default = false
-%   cfg.useParallel : use parfor over cfg.nIter         default = false
-%   cfg.superTrial  : trials averaged into supertrial    default = 1
+%   cfg.useParallel  : use parfor over cfg.nIter         default = false
+%   cfg.superTrial   : trials averaged into supertrial   default = 1
+%
+% SVM-specific cfg fields:
+%   cfg.kernelFunction : SVM kernel                      default = 'linear'
+%   cfg.kernelScale    : SVM KernelScale                 default = 'auto'
+%   cfg.boxConstraint  : SVM BoxConstraint               default = 1
+%   cfg.standardize    : z-score using training data     default = false
 %
 % Outputs:
 %   result.predictAcc, result.AUC, result.predictAccTrain, result.weights
-%   result.predictAccShuffle, result.predictAccMinusShuffle if doShuffle = true
+%   result.times, result.cfg, result.classLabelsOriginal, result.balanceInfo
+%   result.predictAccShuffle, result.AUCShuffle,
+%   result.predictAccMinusShuffle, result.AUCMinusShuffle if doShuffle = true
+%
+% Notes:
+%   - Output matrices are nTimeOut x nTimeOut.
+%   - If cfg.doTimeGeneralization = false, only the diagonal is filled.
+%   - PCA and z-scoring are fitted on training data only.
+%   - weights are returned only for linear SVM; nonlinear kernels return NaN.
 
 if nargin < 4 || isempty(cfg), cfg = struct(); end
 cfg = fill_default_cfg(cfg);
 
+validateattributes(eegData, {'numeric'}, {'nonempty','3d'}, mfilename, 'eegData', 1);
+validateattributes(labels,  {'numeric','logical'}, {'nonempty','vector'}, mfilename, 'labels', 2);
+validateattributes(times,   {'numeric'}, {'nonempty','vector'}, mfilename, 'times', 3);
+validateattributes(cfg,     {'struct'}, {'scalar'}, mfilename, 'cfg', 4);
+
 labels = labels(:);
 times  = times(:)';
-[nCh, nTime, nTrials] = size(eegData);
+[~, nTime, nTrials] = size(eegData);
 
 if numel(labels) ~= nTrials || numel(times) ~= nTime
     error('Mismatch among eegData, labels, and times.');
@@ -33,20 +65,20 @@ end
 
 uLabels = unique(labels);
 if numel(uLabels) ~= 2
-    error('LDA_function_singleSubj currently supports binary classification only.');
+    error('SVM_function_singleSubj currently supports binary classification only.');
 end
 
 if ~isempty(cfg.randomSeed)
     rng(cfg.randomSeed, 'twister');
 end
 
-% Temporal binning/smoothing.
+% Temporal binning/smoothing, same convention as LDA_function_singleSubj.
 if cfg.smooth_window > 0 || ~isempty(cfg.smooth_step)
     [eegData, times] = apply_temporal_window(eegData, times, cfg.smooth_window, cfg.smooth_step, cfg.timeWindowMode);
 end
 [nCh, nTime, ~] = size(eegData);
 
-% Relabel to 1/2 internally.
+% Relabel to 1/2 internally, but keep original labels in result.
 labels_internal = zeros(size(labels));
 labels_internal(labels == uLabels(1)) = 1;
 labels_internal(labels == uLabels(2)) = 2;
@@ -72,9 +104,8 @@ end
 
 balanceInfo = cell(cfg.nIter, 1);
 
-% Parallelization is intentionally placed at the iteration level, not the
-% training-time level. Each worker computes one full random iteration using
-% local arrays, then writes a whole sliced block back to the output arrays.
+% Parallelization is at the iteration level, consistent with
+% LDA_function_singleSubj. Each worker computes one complete iteration.
 if cfg.useParallel
     parfor sampi = 1:cfg.nIter
         [predictAcc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
@@ -158,11 +189,14 @@ end
 
 %% ========================================================================
 function cfg = fill_default_cfg(cfg)
+% Backward-compatible aliases used in earlier decoding scripts.
 if isfield(cfg,'avgNTrials') && ~isfield(cfg,'superTrial'), cfg.superTrial = cfg.avgNTrials; end
 if isfield(cfg,'binSize')    && ~isfield(cfg,'smooth_window'), cfg.smooth_window = cfg.binSize; end
 if isfield(cfg,'seed')       && ~isfield(cfg,'randomSeed'), cfg.randomSeed = cfg.seed; end
 if isfield(cfg,'zscore')     && ~isfield(cfg,'standardize'), cfg.standardize = cfg.zscore; end
+if isfield(cfg,'svmKernel')  && ~isfield(cfg,'kernelFunction'), cfg.kernelFunction = cfg.svmKernel; end
 
+% Shared cfg fields, matched to LDA_function_singleSubj.
 if ~isfield(cfg,'cvType'),               cfg.cvType = 'kfold'; end
 if ~isfield(cfg,'trainRatio'),           cfg.trainRatio = 2/3; end
 if ~isfield(cfg,'nFolds'),               cfg.nFolds = 10; end
@@ -174,7 +208,6 @@ if ~isfield(cfg,'smooth_window'),        cfg.smooth_window = 0; end
 if ~isfield(cfg,'smooth_step'),          cfg.smooth_step = []; end
 if ~isfield(cfg,'timeWindowMode'),       cfg.timeWindowMode = 'centered'; end
 if ~isfield(cfg,'doTimeGeneralization'), cfg.doTimeGeneralization = true; end
-if ~isfield(cfg,'discrimType'),          cfg.discrimType = 'diagLinear'; end
 if ~isfield(cfg,'standardize'),          cfg.standardize = false; end
 if ~isfield(cfg,'doShuffle'),            cfg.doShuffle = false; end
 if ~isfield(cfg,'balanceTrials'),        cfg.balanceTrials = false; end
@@ -184,8 +217,41 @@ if ~isfield(cfg,'verbose'),              cfg.verbose = true; end
 if ~isfield(cfg,'randomSeed'),           cfg.randomSeed = []; end
 if ~isfield(cfg,'useParallel'),          cfg.useParallel = false; end
 
+% SVM-specific cfg fields.
+if ~isfield(cfg,'kernelFunction'),       cfg.kernelFunction = 'linear'; end
+if ~isfield(cfg,'kernelScale'),          cfg.kernelScale = 'auto'; end
+if ~isfield(cfg,'boxConstraint'),        cfg.boxConstraint = 1; end
+if ~isfield(cfg,'solver'),               cfg.solver = []; end
+if ~isfield(cfg,'scoreTransform'),       cfg.scoreTransform = []; end
+
 cfg.cvType = lower(char(cfg.cvType));
 cfg.timeWindowMode = lower(char(cfg.timeWindowMode));
+cfg.kernelFunction = char(cfg.kernelFunction);
+
+if ~ismember(cfg.cvType, {'holdout','kfold'})
+    error('cfg.cvType must be either ''holdout'' or ''kfold''.');
+end
+if ~ismember(cfg.timeWindowMode, {'centered','bin'})
+    error('cfg.timeWindowMode must be either ''centered'' or ''bin''.');
+end
+
+validateattributes(cfg.trainRatio, {'numeric'}, {'scalar','>',0,'<',1});
+validateattributes(cfg.nFolds, {'numeric'}, {'scalar','integer','>=',2});
+validateattributes(cfg.superTrial, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.nIter, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.doPCA, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.nPCs, {'numeric'}, {'scalar','integer','>=',1});
+validateattributes(cfg.smooth_window, {'numeric'}, {'scalar','>=',0});
+if ~isempty(cfg.smooth_step)
+    validateattributes(cfg.smooth_step, {'numeric'}, {'scalar','>',0});
+end
+validateattributes(cfg.doTimeGeneralization, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.standardize, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.doShuffle, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.balanceTrials, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.verbose, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.useParallel, {'numeric','logical'}, {'scalar'});
+validateattributes(cfg.boxConstraint, {'numeric'}, {'scalar','positive'});
 end
 
 %% ========================================================================
@@ -215,19 +281,29 @@ end
 balanceInfo_iter = [];
 
 % Optional trial balancing. If cfg.balanceFactors is provided, balance
-% jointly by [classLabel, balanceFactors].
+% jointly by [classLabel, balanceFactors]. This matches the LDA function's
+% intended behavior, with a local fallback if balance_trials_by_label.m is
+% not on the MATLAB path.
 if cfg.balanceTrials
     balLabels = labels_internal(:);
     if ~isempty(cfg.balanceFactors)
+        if size(cfg.balanceFactors, 1) ~= numel(labels_internal)
+            error('cfg.balanceFactors must have the same number of rows as trials.');
+        end
         balLabels = [balLabels, cfg.balanceFactors];
     end
 
     seedNow = [];
     if ~isempty(cfg.randomSeed), seedNow = cfg.randomSeed + sampi - 1; end
 
-    [dataIter, balLabelsOut, ~, balanceInfo_iter] = balance_trials_by_label( ...
-        eegData, balLabels, 'trialDim', 3, 'nPerCell', cfg.balanceNPerCell, ...
-        'seed', seedNow, 'shuffleOutput', true);
+    if exist('balance_trials_by_label', 'file') == 2
+        [dataIter, balLabelsOut, ~, balanceInfo_iter] = balance_trials_by_label( ...
+            eegData, balLabels, 'trialDim', 3, 'nPerCell', cfg.balanceNPerCell, ...
+            'seed', seedNow, 'shuffleOutput', true);
+    else
+        [dataIter, balLabelsOut, ~, balanceInfo_iter] = balance_trials_by_label( ...
+            eegData, balLabels, cfg.balanceNPerCell, seedNow, true);
+    end
     labelsIter = balLabelsOut(:,1);
 else
     dataIter = eegData;
@@ -239,12 +315,16 @@ data1 = dataIter(:,:,labelsIter == 1);
 data2 = dataIter(:,:,labelsIter == 2);
 
 if cfg.superTrial > 1
-    data1 = func_make_superTrials(data1, cfg.superTrial);
-    data2 = func_make_superTrials(data2, cfg.superTrial);
+    data1 = make_supertrials_consistent(data1, cfg.superTrial);
+    data2 = make_supertrials_consistent(data2, cfg.superTrial);
 end
 
 allTrials = cat(3, data1, data2);
 allLabels = [ones(size(data1,3),1); 2*ones(size(data2,3),1)];
+
+if strcmpi(cfg.cvType, 'kfold') && min(histcounts(allLabels, 0.5:1:2.5)) < cfg.nFolds
+    error('At least one class has fewer trials/supertrials than cfg.nFolds.');
+end
 
 [trainIdxList, testIdxList] = make_cv_splits(allLabels, cfg);
 
@@ -311,6 +391,9 @@ weightVec = nan(nCh, 1);
 Xtrain = squeeze(allTrials(:, trainTime, trainIdx))';
 if isvector(Xtrain), Xtrain = reshape(Xtrain, sum(trainIdx), nCh); end
 
+% Manual train-only z-scoring is used instead of fitcsvm(...,'Standardize',true)
+% so that PCA, test-time projection, and weight back-projection follow the
+% same logic as LDA_function_singleSubj.
 mu_z = [];
 sigma_z = [];
 if cfg.standardize
@@ -323,17 +406,23 @@ if cfg.doPCA
     [coeff, Xtrain, mu_pca] = fit_pca_train_only(Xtrain, cfg.nPCs);
 end
 
-ldaModel = fitcdiscr(Xtrain, trainY, 'DiscrimType', cfg.discrimType);
+svmModel = fit_svm_model(Xtrain, trainY, cfg);
 if cfg.doShuffle
-    ldaModelShuffle = fitcdiscr(Xtrain, trainYShuffle, 'DiscrimType', cfg.discrimType);
+    svmModelShuffle = fit_svm_model(Xtrain, trainYShuffle, cfg);
+else
+    svmModelShuffle = [];
 end
 
-w_use = lda_weight_from_data(Xtrain, trainY, cfg.discrimType);
-if cfg.doPCA, w_use = coeff * w_use; end
-if cfg.standardize, w_use = w_use ./ sigma_z(:); end
-weightVec = w_use;
+% Linear SVM weights in original channel space. For nonlinear kernels,
+% a single channel-space weight vector is not well-defined.
+if strcmpi(cfg.kernelFunction, 'linear') && isprop(svmModel, 'Beta') && ~isempty(svmModel.Beta)
+    w_use = svmModel.Beta;
+    if cfg.doPCA, w_use = coeff * w_use; end
+    if cfg.standardize, w_use = w_use ./ sigma_z(:); end
+    weightVec = w_use;
+end
 
-labelTrain = predict(ldaModel, Xtrain);
+labelTrain = predict(svmModel, Xtrain);
 trainAccVal = mean(labelTrain == trainY);
 
 if cfg.doTimeGeneralization
@@ -349,16 +438,35 @@ for testTime = testTimes
     if cfg.standardize, Xtest = (Xtest - mu_z) ./ sigma_z; end
     if cfg.doPCA, Xtest = (Xtest - mu_pca) * coeff; end
 
-    [labelTest, score] = predict(ldaModel, Xtest);
+    [labelTest, score] = predict(svmModel, Xtest);
     accRow(testTime) = mean(labelTest == testY);
-    aucRow(testTime) = binary_auc(testY, score, ldaModel.ClassNames, 2);
+    aucRow(testTime) = binary_auc(testY, score, svmModel.ClassNames, 2);
 
     if cfg.doShuffle
-        [labelShuf, scoreShuf] = predict(ldaModelShuffle, Xtest);
+        [labelShuf, scoreShuf] = predict(svmModelShuffle, Xtest);
         accShufRow(testTime) = mean(labelShuf == testY);
-        aucShufRow(testTime) = binary_auc(testY, scoreShuf, ldaModelShuffle.ClassNames, 2);
+        aucShufRow(testTime) = binary_auc(testY, scoreShuf, svmModelShuffle.ClassNames, 2);
     end
 end
+end
+
+%% ========================================================================
+function svmModel = fit_svm_model(Xtrain, trainY, cfg)
+args = {'KernelFunction', cfg.kernelFunction, ...
+        'Standardize', false, ...
+        'BoxConstraint', cfg.boxConstraint};
+
+if ~isempty(cfg.kernelScale)
+    args = [args, {'KernelScale', cfg.kernelScale}]; 
+end
+if ~isempty(cfg.solver)
+    args = [args, {'Solver', cfg.solver}]; 
+end
+if ~isempty(cfg.scoreTransform)
+    args = [args, {'ScoreTransform', cfg.scoreTransform}]; 
+end
+
+svmModel = fitcsvm(Xtrain, trainY, args{:});
 end
 
 %% ========================================================================
@@ -386,6 +494,10 @@ else
         centerIdx = find(times >= times(1)+halfWin & times <= times(end)-halfWin);
     else
         centerIdx = 1:numel(times);
+    end
+
+    if isempty(centerIdx)
+        error('No valid time points remain after temporal windowing.');
     end
 
     if ~isempty(step)
@@ -423,42 +535,52 @@ end
 %% ========================================================================
 function [coeff, score, mu] = fit_pca_train_only(X, nPCs)
 maxPC = min([size(X,1)-1, size(X,2), nPCs]);
+if maxPC < 1
+    error('Not enough observations/features for PCA.');
+end
 [coeff, score, ~, ~, ~, mu] = pca(X);
 coeff = coeff(:,1:maxPC);
 score = score(:,1:maxPC);
 end
 
 %% ========================================================================
-function w = lda_weight_from_data(X, y, discrimType)
-X1 = X(y == 1, :);
-X2 = X(y == 2, :);
-mu1 = mean(X1, 1, 'omitnan');
-mu2 = mean(X2, 1, 'omitnan');
-
-if strcmpi(discrimType, 'linear')
-    S1 = cov(X1);
-    S2 = cov(X2);
-    n1 = size(X1,1);
-    n2 = size(X2,1);
-    Sp = ((n1-1)*S1 + (n2-1)*S2) / max(n1+n2-2, 1);
-    w = pinv(Sp + eye(size(Sp))*eps) * (mu2 - mu1)';
-else
-    v1 = var(X1, 0, 1, 'omitnan');
-    v2 = var(X2, 0, 1, 'omitnan');
-    n1 = size(X1,1);
-    n2 = size(X2,1);
-    vp = ((n1-1)*v1 + (n2-1)*v2) / max(n1+n2-2, 1);
-    vp(vp <= eps | isnan(vp)) = eps;
-    w = ((mu2 - mu1) ./ vp)';
+function aucVal = binary_auc(testY, score, classNames, posClass)
+aucVal = NaN;
+posCol = find(classNames == posClass, 1);
+if ~isempty(posCol) && size(score,2) >= posCol && numel(unique(testY)) == 2
+    [~,~,~,aucVal] = perfcurve(testY, score(:,posCol), posClass);
 end
 end
 
 %% ========================================================================
-function aucVal = binary_auc(testY, score, classNames, posClass)
-aucVal = NaN;
-posCol = find(classNames == posClass, 1);
-if ~isempty(posCol) && numel(unique(testY)) == 2
-    [~,~,~,aucVal] = perfcurve(testY, score(:,posCol), posClass);
+function dataSup = make_supertrials_consistent(data, superTrial)
+if superTrial <= 1
+    dataSup = data;
+    return;
+end
+
+if exist('func_make_superTrials', 'file') == 2
+    dataSup = func_make_superTrials(data, superTrial);
+else
+    dataSup = make_supertrials_local(data, superTrial);
+end
+end
+
+%% ========================================================================
+function dataSup = make_supertrials_local(data, superTrial)
+[nCh, nTime, nTrials] = size(data);
+nSuperTrials = floor(nTrials / superTrial);
+if nSuperTrials < 1
+    error('Not enough trials (%d) to create supertrials with superTrial = %d.', nTrials, superTrial);
+end
+
+randIdx = randperm(nTrials);
+randIdx = randIdx(1:nSuperTrials * superTrial);
+dataSup = zeros(nCh, nTime, nSuperTrials, 'like', data);
+
+for si = 1:nSuperTrials
+    useIdx = randIdx((si-1)*superTrial + 1 : si*superTrial);
+    dataSup(:,:,si) = mean(data(:,:,useIdx), 3, 'omitnan');
 end
 end
 

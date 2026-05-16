@@ -4,20 +4,20 @@
 
 % Attempt clsifying left versus right over time.
 dbstop if error;
-
-load grand_cda_alltrials.mat
-
-% only use subjects with a certain # of trials!
-subjects = grand.subjects(grand.min_trials_per_cond>=160);
+path_subj = [ erase(pwd,'code') 'data_raw'];
+% load grand_cda_alltrials.mat
+% 
+% % only use subjects with a certain # of trials!
+% subjects = grand.subjects(grand.min_trials_per_cond>=160);
 
 % Load example file
-load([pwd,filesep,'CDA_data',filesep,char(num2str(subjects(1))),filesep,'erp_singletrial.mat'])
+load([path_subj,filesep,char(num2str(subjects(1))),filesep,'erp_singletrial.mat'])
 
 tPts = cda.time;
 binSize = 50;
 tBins = [min(tPts):binSize:max(tPts)];
 
-cls.subjects = subjects;
+% cls.subjects = subjects;
 cls.time = tPts;
 cls.bins = tBins;
 cls.binCenters = [min(tPts)+round(binSize./2):binSize:max(tPts)-binSize];
@@ -38,7 +38,7 @@ cls.nTrials = NaN(nSubs,1);
 % Loop through subjects
 for s = 1:nSubs
     %% Load subject
-    load([pwd,filesep,'CDA_data',filesep,char(num2str(subjects(s))),filesep,'erp_singletrial.mat'])
+    load([path_subj,filesep,char(num2str(s)),filesep,'erp_singletrial.mat'])
     %%
     % Average for this timepoint, create a matrix and left/ right data
     tempDat = [erp.trial.L_C2; erp.trial.L_C6; erp.trial.L_S2; erp.trial.L_S6; ...

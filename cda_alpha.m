@@ -131,7 +131,7 @@ for s = 1:length(subjects)
             continue;
         end
 
-        win = (erp.eventTimes(ec) - 50) : (erp.eventTimes(ec) + erp.post_timepoint);
+        win = (erp.eventTimes(ec) - 50) : (erp.eventTimes(ec) + erp.post_timepoint); % same as the authors' code, 50 steps mean 200ms
 
         % Skip epochs exceeding data bounds
         if win(1) < 1 || win(end) > nPnts
@@ -150,6 +150,7 @@ for s = 1:length(subjects)
         fn = conditions_LR{tc};
         tr = size(erp.trial_raw.(fn), 1) + 1;
 
+        win = (erp.eventTimes(ec) - erp.pre_timepoint) : (erp.eventTimes(ec) + erp.post_timepoint); % same as the authors' code, 50 steps mean 200ms
         epochRaw = erp.data(:, win);  % channels x time
         erp.trial_raw.(fn)(tr,:,:) = epochRaw;  % trials x channels x time
         erp.keep_event_idx.(fn)(tr,1)  = ec;

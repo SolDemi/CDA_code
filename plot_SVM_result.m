@@ -1,5 +1,5 @@
 clear, clc;
-decodefolder = 'LDA';
+decodefolder = 'SVM';
 
 maindir = erase(pwd,'code');
 decodingDir = fullfile(maindir, ['decoding_' decodefolder] );
@@ -13,22 +13,19 @@ time = -200:4:996;
 idx  = dsearchn( [-200:4:996]', time'); %
 
 
-for m = 1:numel(modelNames)
+for m = 1%:numel(modelNames)
     modelName = modelNames{m};
-    files = dir(fullfile(decodingDir, modelName, '*Super*'));
+    files = dir(fullfile(decodingDir, modelName,'sub*'));% , '*Super*'
     disp(['Now Processing: ' modelName])
     diagAUC = [];
     for s = 1:numel(files)
         S = load(fullfile(files(s).folder, files(s).name));
-        R = S.(modelName);
-        if ~isvector(R.AUC) 
-            diagAUC(s,:) = diag(R.AUC)'; %#ok<SAGROW>
-        else
-            diagAUC(s,:) = R.AUC;
-        end
+        R = S.CDA;
+        diagAUC(s,:) = diag(R.AUC)'; %#ok<SAGROW>
 
     end
-    % diagAUC = diagAUC(:,idx);
+    % time = R.times';
+    diagAUC = diagAUC(:,idx);
     stats.(modelName).diagAUC = diagAUC;
     stats.(modelName).mean = mean(diagAUC, 1);
     stats.(modelName).sem  = std(diagAUC, 0, 1) ./ sqrt(size(diagAUC,1));
@@ -40,7 +37,7 @@ end
 % validTimeMask = (time - half_window >= time(1)) & (time + half_window <= time(end));
 % time = time(validTimeMask);
 
-%% plotting
+%% plotting 4 models
     xlim_plot = [-200 1000];
     ylim_plot = [0.49 0.53];
     xlabel_p  = 'Times';
@@ -54,13 +51,13 @@ yline(0.5,'--r')
 xline(150,'--r','Memory array offset')
 
 
-
+time = GroupStats_CDA.times;
 timeidx = dsearchn(time',[400 950]');
-meanAUC = mean( stats.CDA.diagAUC(:,timeidx(1):timeidx(2) ) );
+meanAUC = mean( GroupStats_CDA.meanAcc(:,timeidx(1):timeidx(2) ) );
 [h, p, ci, ~] = ttest(meanAUC, 0.5, 'Tail', 'right');
 cohen_d = ( mean(meanAUC) - 0.5 ) / std(meanAUC)
 
-%%
+%% plotting 1 model
 fig = figure('Color','w','Position',[100 100 1100 600]); hold on;
 tmp_modelNames = {'CDA'};
 for m = 1:numel(tmp_modelNames)

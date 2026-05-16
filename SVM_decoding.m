@@ -1,7 +1,7 @@
 clear,clc
 maindir = erase(pwd,'code');
 datadir = [maindir 'cda_alpha\'];
-outputdir = [maindir 'decoding\'];
+outputdir = [maindir 'decoding_SVM\'];
 % create folders
 for i = 1:4
     switch i
@@ -15,14 +15,34 @@ for i = 1:4
     end
 end
  
-cfg.nFolds = 10;
+%% config
+cfg = struct();
+cfg.cvType = 'holdout';        % 'holdout' reproduces 2/3 train, 1/3 test style
+cfg.trainRatio = 2/3;
+cfg.nFolds = 3;                % only used when cfg.cvType = 'kfold'
 cfg.superTrial = 1;
-cfg.nIter = 1;
+cfg.nIter = 100;
+
 cfg.smooth_window = 50;
+cfg.smooth_step = 50;
+cfg.timeWindowMode = 'bin';    % article-style 50-ms bins
+
+cfg.doTimeGeneralization = false;
 cfg.doPCA = false;
-cfg.time = -200:4:996;
+cfg.nPCs = 5;
+cfg.discrimType = 'Linear';
+cfg.standardize = 1;
 
+cfg.doShuffle = true;          % shuffled TRAINING labels empirical chance
+cfg.balanceTrials = true;      % balance classes each iteration
+cfg.balanceNPerCell = [];
+cfg.balanceFactors = [];
 
+cfg.useParallel = true;
+cfg.verbose = 0;
+cfg.randomSeed = [];
+CDA = struct();
+%%
 files = dir([datadir 'sub*']);
 for s = numel(files):-1:1
     result = struct();
@@ -40,8 +60,8 @@ for s = numel(files):-1:1
     data1  = cat( 1, cda.trial.diff_2, cda.trial.diff_6 ); % trials x channels x time
     data1  = permute(data1, [2,3,1]);
     % decode load based on CDA
-    CDA = SVM_function_confusion_singleSubj(data1,labels, cda.time,cfg);
-
+    subj_CDA = SVM_function_singleSubj(data1,labels, cda.time,cfg);
+    CDA.
     save([outputdir 'CDA\' file], "CDA")
     %
     % % decode load based on alpha band
