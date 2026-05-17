@@ -9,27 +9,33 @@ colors = [0.00 0.45 0.74; 0.85 0.33 0.10; 0.47 0.67 0.19; 0.49 0.18 0.56];
 stats = struct();
 
 
-time = -200:4:996;
-idx  = dsearchn( [-200:4:996]', time'); %
+% time = -200:4:996;
+% idx  = dsearchn( [-200:4:996]', time'); %
 
 
-for m = 1%:numel(modelNames)
+for m = 1:numel(modelNames)
     modelName = modelNames{m};
-    files = dir(fullfile(decodingDir, modelName,'sub*'));% , '*Super*'
+    files = dir(fullfile(decodingDir, modelName,'sub*.mat'));%
     disp(['Now Processing: ' modelName])
     diagAUC = [];
     for s = 1:numel(files)
         S = load(fullfile(files(s).folder, files(s).name));
-        R = S.CDA;
-        diagAUC(s,:) = diag(R.AUC)'; %#ok<SAGROW>
+        R = S.(modelName);
+        diagAUC(s,:) = diag(R.AUC); %#ok<SAGROW>
 
     end
-    % time = R.times';
-    diagAUC = diagAUC(:,idx);
+    time = R.times';
+    % diagAUC = diagAUC(:,idx);
     stats.(modelName).diagAUC = diagAUC;
     stats.(modelName).mean = mean(diagAUC, 1);
     stats.(modelName).sem  = std(diagAUC, 0, 1) ./ sqrt(size(diagAUC,1));
     stats.(modelName).n    = size(diagAUC,1);
+
+    timeidx = dsearchn(time',[400 950]');
+    meanAUC = mean( stats.(modelName).diagAUC(:,timeidx(1):timeidx(2) ) );
+    mean(meanAUC)
+    cohen_d = ( mean(meanAUC) - 0.5 ) / std(meanAUC)
+
 end
 
 
@@ -39,7 +45,7 @@ end
 
 %% plotting 4 models
     xlim_plot = [-200 1000];
-    ylim_plot = [0.49 0.53];
+    ylim_plot = [0.4 0.6];
     xlabel_p  = 'Times';
     ylabel_p  = 'AUC';
 
@@ -51,9 +57,7 @@ yline(0.5,'--r')
 xline(150,'--r','Memory array offset')
 
 
-time = GroupStats_CDA.times;
-timeidx = dsearchn(time',[400 950]');
-meanAUC = mean( GroupStats_CDA.meanAcc(:,timeidx(1):timeidx(2) ) );
+
 [h, p, ci, ~] = ttest(meanAUC, 0.5, 'Tail', 'right');
 cohen_d = ( mean(meanAUC) - 0.5 ) / std(meanAUC)
 
