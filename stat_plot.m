@@ -3,8 +3,8 @@ loadCfg = struct();
 loadCfg.metric = 'AUC';
 loadCfg.useDiagonal = true;      % use diag(AUC) from train-time x test-time matrix
 % loadCfg.resultVarName = 'CDA'; % optional, if every .mat saves the variable as CDA
-
-[groupAUC, times, files] = extract_decoding_timeseries('/path/to/decoding/CDA', loadCfg); 
+loadPath = [erase(pwd,'code') 'decoding/' 'Alpha/'];
+[groupAUC, times, files] = extract_decoding_timeseries(loadPath, loadCfg); 
 
 statCfg = struct();
 statCfg.null = 0.5;

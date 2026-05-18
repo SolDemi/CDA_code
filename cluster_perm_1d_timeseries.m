@@ -141,14 +141,14 @@ for ci = 1:numel(obsClusters)
     idx = obsClusters{ci};
     clusterP(ci) = (1 + sum(maxClusterStatNull >= obsClusterStats(ci))) / (cfg.nPerm + 1);
 
-    clusters(ci).idx = idx; %#ok<AGROW>
-    clusters(ci).startIdx = idx(1); %#ok<AGROW>
-    clusters(ci).endIdx = idx(end); %#ok<AGROW>
-    clusters(ci).startTime = times(idx(1)); %#ok<AGROW>
-    clusters(ci).endTime = times(idx(end)); %#ok<AGROW>
-    clusters(ci).clusterStat = obsClusterStats(ci); %#ok<AGROW>
-    clusters(ci).p = clusterP(ci); %#ok<AGROW>
-    clusters(ci).nSamples = numel(idx); %#ok<AGROW>
+    clusters(ci).idx = idx; 
+    clusters(ci).startIdx = idx(1); 
+    clusters(ci).endIdx = idx(end); 
+    clusters(ci).startTime = times(idx(1)); 
+    clusters(ci).endTime = times(idx(end)); 
+    clusters(ci).clusterStat = obsClusterStats(ci); 
+    clusters(ci).p = clusterP(ci); 
+    clusters(ci).nSamples = numel(idx); 
 
     if clusterP(ci) <= cfg.alpha
         significantMask(idx) = true;
@@ -192,7 +192,7 @@ end
 %% ========================================================================
 function cfg = fill_default_cfg(cfg, nTime)
 if ~isfield(cfg, 'null'),           cfg.null = 0; end
-if ~isfield(cfg, 'nPerm'),          cfg.nPerm = 5000; end
+if ~isfield(cfg, 'nPerm'),          cfg.nPerm = 1000; end
 if ~isfield(cfg, 'tail'),           cfg.tail = 'right'; end
 if ~isfield(cfg, 'clusterAlpha'),   cfg.clusterAlpha = 0.05; end
 if ~isfield(cfg, 'alpha'),          cfg.alpha = 0.05; end

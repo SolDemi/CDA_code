@@ -18,3 +18,6 @@ plot_SVM_result
 stat_plot
 
 % job
+
+% process data0
+process_data0
