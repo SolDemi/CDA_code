@@ -211,7 +211,7 @@ args = {'KernelFunction', cfg.kernelFunction, ...
     'Standardize', false, ...
     'BoxConstraint', cfg.boxConstraint};
 if ~isempty(cfg.kernelScale)
-    args = [args, {'KernelScale', cfg.kernelScale}]; %#ok<AGROW>
+    args = [args, {'KernelScale', cfg.kernelScale}]; 
 end
 svmModel = fitcsvm(Xtrain, trainY, args{:});
 end
