@@ -8,8 +8,9 @@ stat_plot
 % control analysis
 addpath("spatial_control_code\")
 process_spatial_control_decoding
+stat_plot_spatial_control
 %% process data1
-% calculate cda、alpha（原始数据基线-200ms，无法提取alpha频段，所以重新修改基线至-1000ms）
+% calculate cda、alpha（原始数据基线-200ms，无法对alpha频段做基线校正，所以重新修改基线至-1000ms）
 cda_alpha
 
 % compare CDA（看看原始数据CDA和新生成的CDA差异）

@@ -5,7 +5,8 @@
 % 3) side-balanced load decoding
 % 4) cross-side load generalization
 %
-% Required helper functions:
+% Put this file in CDA_code/code or any folder where your existing helper
+% functions are on the MATLAB path:
 % SVM_function_singleSubj.m
 % SVM_crossSide_singleSubj.m
 % calculate_high_gamma_power.m
@@ -71,16 +72,18 @@ sideCfg(1).name = 'attendLeft';
 sideCfg(1).channel_contra = R_labels;
 sideCfg(1).channel_ipsi   = L_labels;
 sideCfg(1).condLow  = 1;
+sideCfg(1).condMid  = 2;
 sideCfg(1).condHigh = 3;
 
 sideCfg(2).name = 'attendRight';
 sideCfg(2).channel_contra = L_labels;
 sideCfg(2).channel_ipsi   = R_labels;
 sideCfg(2).condLow  = 4;
+sideCfg(2).condMid  = 5;
 sideCfg(2).condHigh = 6;
 
 %% alpha config
-baselinewindow = [-300, -100];
+baselinewindow = [-1400, -1100];
 frep = [8, 12];
 
 %% decoding
@@ -96,12 +99,14 @@ for s = 1:numel(files)
     chanLabels = tmp.eeg.chanLabels;
     srate = tmp.eeg.settings.srate;
 
-    sideDat = struct();
+    sideDatCell = cell(1, 2);
     for sidei = 1:2
-        sideDat(sidei).name = sideCfg(sidei).name;
-        sideDat(sidei) = build_side_features(sideDat(sidei), eeg0, artifactInd, chanLabels, ...
+        sideOne = struct();
+        sideOne.name = sideCfg(sidei).name;
+        sideDatCell{sidei} = build_side_features(sideOne, eeg0, artifactInd, chanLabels, ...
             sideCfg(sidei), L_labels, R_labels, global_labels, srate, time, baselinewindow, frep);
     end
+    sideDat = [sideDatCell{:}];
 
     %% ============================================================
     % 1) Side decoding positive control
@@ -232,6 +237,10 @@ function sideOne = build_side_features(sideOne, eeg0, artifactInd, chanLabels, s
         eeg0, artifactInd, chanLabels, sideCfg.condLow, sideCfg.channel_contra, ...
         sideCfg.channel_ipsi, L_labels, R_labels, global_labels);
 
+    [contraMid, ipsiMid, rawMid, leftMid, rightMid] = get_clean_trials_fixed_order( ...
+        eeg0, artifactInd, chanLabels, sideCfg.condMid, sideCfg.channel_contra, ...
+        sideCfg.channel_ipsi, L_labels, R_labels, global_labels);
+
     [contraHigh, ipsiHigh, rawHigh, leftHigh, rightHigh] = get_clean_trials_fixed_order( ...
         eeg0, artifactInd, chanLabels, sideCfg.condHigh, sideCfg.channel_contra, ...
         sideCfg.channel_ipsi, L_labels, R_labels, global_labels);
@@ -241,6 +250,10 @@ function sideOne = build_side_features(sideOne, eeg0, artifactInd, chanLabels, s
     alphaRawLow     = calculate_high_gamma_power(rawLow,     srate, time, baselinewindow, frep);
     alphaLeftLow    = calculate_high_gamma_power(leftLow,    srate, time, baselinewindow, frep);
     alphaRightLow   = calculate_high_gamma_power(rightLow,   srate, time, baselinewindow, frep);
+
+    alphaRawMid     = calculate_high_gamma_power(rawMid,     srate, time, baselinewindow, frep);
+    alphaLeftMid    = calculate_high_gamma_power(leftMid,    srate, time, baselinewindow, frep);
+    alphaRightMid   = calculate_high_gamma_power(rightMid,   srate, time, baselinewindow, frep);
 
     alphaContraHigh = calculate_high_gamma_power(contraHigh, srate, time, baselinewindow, frep);
     alphaIpsiHigh   = calculate_high_gamma_power(ipsiHigh,   srate, time, baselinewindow, frep);
@@ -262,17 +275,24 @@ function sideOne = build_side_features(sideOne, eeg0, artifactInd, chanLabels, s
     sideOne.GlobalAlphaMean.high = mean(alphaRawHigh, 1, 'omitnan');
 
     % Side-decoding features: fixed anatomical features; no contra/ipsi recoding.
+    % Side decoding uses all load levels: low/mid/high = 1/2/3 vs 4/5/6.
     sideOne.VoltageRawLR.low  = rawLow;
+    sideOne.VoltageRawLR.mid  = rawMid;
     sideOne.VoltageRawLR.high = rawHigh;
 
     sideOne.AlphaRawLR.low  = alphaRawLow;
+    sideOne.AlphaRawLR.mid  = alphaRawMid;
     sideOne.AlphaRawLR.high = alphaRawHigh;
 
     sideOne.VoltageLminusR.low  = leftLow  - rightLow;
+    sideOne.VoltageLminusR.mid  = leftMid  - rightMid;
     sideOne.VoltageLminusR.high = leftHigh - rightHigh;
 
     sideOne.AlphaLminusR.low  = alphaLeftLow  - alphaRightLow;
+    sideOne.AlphaLminusR.mid  = alphaLeftMid  - alphaRightMid;
     sideOne.AlphaLminusR.high = alphaLeftHigh - alphaRightHigh;
+
+    sideOne.GlobalAlphaMean.mid = mean(alphaRawMid, 1, 'omitnan');
 end
 
 function [Xcontra, Xipsi, Xraw, XL, XR] = get_clean_trials_fixed_order( ...
@@ -316,16 +336,27 @@ function idx = find_chan_idx(chanLabels, labels)
 end
 
 function [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName)
-    X1low  = sideDat(1).(featName).low;
-    X1high = sideDat(1).(featName).high;
-    X2low  = sideDat(2).(featName).low;
-    X2high = sideDat(2).(featName).high;
+    % Decode spatial side using all load levels.
+    % condition 1/2/3 = side 1; condition 4/5/6 = side 2.
+    % loadFactor keeps low/mid/high balanced across side during SVM iterations.
+    loadLevels = {'low', 'mid', 'high'};
 
-    dataSide = cat(3, X1low, X1high, X2low, X2high);
-    labelsSide = [ones(size(X1low,3) + size(X1high,3), 1); ...
-                  2 * ones(size(X2low,3) + size(X2high,3), 1)];
-    loadFactor = [ones(size(X1low,3),1); 2*ones(size(X1high,3),1); ...
-                  ones(size(X2low,3),1); 2*ones(size(X2high,3),1)];
+    X = cell(2, numel(loadLevels));
+    n = zeros(2, numel(loadLevels));
+    for sidei = 1:2
+        for li = 1:numel(loadLevels)
+            X{sidei, li} = sideDat(sidei).(featName).(loadLevels{li});
+            n(sidei, li) = size(X{sidei, li}, 3);
+        end
+    end
+
+    dataSide = cat(3, X{1,1}, X{1,2}, X{1,3}, X{2,1}, X{2,2}, X{2,3});
+
+    labelsSide = [ones(sum(n(1,:)), 1); ...
+                  2 * ones(sum(n(2,:)), 1)];
+
+    loadFactor = [ones(n(1,1),1); 2*ones(n(1,2),1); 3*ones(n(1,3),1); ...
+                  ones(n(2,1),1); 2*ones(n(2,2),1); 3*ones(n(2,3),1)];
 end
 
 function [dataLoad, labelsLoad] = make_load_data_one_side(sideOne, featName)
@@ -360,8 +391,9 @@ function Result = run_svm_if_enough(data, labels, time, cfg)
     end
     if size(data,3) ~= numel(labels), return; end
     Result = SVM_function_singleSubj(data, labels, time, cfg);
-    Result.nClass1 = sum(labels == unique(labels(1)));
-    Result.nClass2 = sum(labels ~= unique(labels(1)));
+    u = unique(labels);
+    Result.nClass1 = sum(labels == u(1));
+    Result.nClass2 = sum(labels == u(2));
     Result.labels = labels;
 end
 
@@ -391,7 +423,7 @@ function Result = average_two_results(R1, R2)
         end
         if numel(vals) == 2 && isequal(size(vals{1}), size(vals{2}))
             Result.(f) = mean(cat(ndims(vals{1})+1, vals{:}), ndims(vals{1})+1, 'omitnan');
-        elseif numel(vals) == 1
+        elseif isscalar(vals)
             Result.(f) = vals{1};
         end
     end
