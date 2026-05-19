@@ -1,13 +1,13 @@
 %% 1) LDA or SVM decoding: AUC above chance
 loadCfg = struct();
-loadCfg.metric = 'AUC';
+loadCfg.metric = 'AUCMinusShuffle';
 loadCfg.useDiagonal = true;      % use diag(AUC) from train-time x test-time matrix
 % loadCfg.resultVarName = 'CDA'; % optional, if every .mat saves the variable as CDA
-loadPath = [erase(pwd,'code') 'decoding/' 'Alpha/'];
+loadPath = fullfile( erase(pwd,'code'), 'data0', 'decoding_SVM/', 'Alpha/');
 [groupAUC, times, files] = extract_decoding_timeseries(loadPath, loadCfg); 
 
 statCfg = struct();
-statCfg.null = 0.5;
+statCfg.null = 0;
 statCfg.nPerm = 1000;
 statCfg.tail = 'right';          % above chance
 statCfg.clusterAlpha = 0.05;

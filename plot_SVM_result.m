@@ -2,7 +2,7 @@ clear, clc;
 decodefolder = 'SVM';
 
 maindir = erase(pwd,'code');
-decodingDir = fullfile(maindir, ['decoding_' decodefolder] );
+decodingDir = fullfile(maindir, 'data0', ['decoding_' decodefolder] );
 
 modelNames = {'CDA','Alpha','NoPCA','PCA'};
 colors = [0.00 0.45 0.74; 0.85 0.33 0.10; 0.47 0.67 0.19; 0.49 0.18 0.56];
@@ -15,17 +15,19 @@ stats = struct();
 
 for m = 1:numel(modelNames)
     modelName = modelNames{m};
-    files = dir(fullfile(decodingDir, modelName,'sub*.mat'));%
+    files = dir(fullfile(decodingDir, modelName,'*.mat'));%
     disp(['Now Processing: ' modelName])
     diagAUC = [];
+    AUC = [];
     for s = 1:numel(files)
         S = load(fullfile(files(s).folder, files(s).name));
         R = S.(modelName);
         diagAUC(s,:) = diag(R.AUC); %#ok<SAGROW>
-
+        AUC(s,:,:) = R.AUC; %#ok<SAGROW>
     end
     time = R.times';
     % diagAUC = diagAUC(:,idx);
+    stats.(modelName).AUC = AUC;
     stats.(modelName).diagAUC = diagAUC;
     stats.(modelName).mean = mean(diagAUC, 1);
     stats.(modelName).sem  = std(diagAUC, 0, 1) ./ sqrt(size(diagAUC,1));
@@ -45,7 +47,7 @@ end
 
 %% plotting 4 models
     xlim_plot = [-200 1000];
-    ylim_plot = [0.4 0.6];
+    ylim_plot = [0.4 0.9];
     xlabel_p  = 'Times';
     ylabel_p  = 'AUC';
 

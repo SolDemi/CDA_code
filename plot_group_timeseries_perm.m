@@ -57,7 +57,7 @@ h.mean = plot(x, y, 'LineWidth', 2.2, 'Color', c, 'DisplayName', cfg.label);
 
 % Null/chance line.
 if isscalar(cfg.null)
-    h.null = yline(cfg.null, ':k', 'Null', 'HandleVisibility', 'off');
+    h.null = yline(cfg.null, ':k', 'HandleVisibility', 'off');
 else
     h.null = plot(x, cfg.null(:)', ':k', 'LineWidth', 1.2, 'HandleVisibility', 'off');
 end
