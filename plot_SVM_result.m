@@ -4,7 +4,7 @@ decodefolder = 'SVM';
 maindir = erase(pwd,'code');
 decodingDir = fullfile(maindir, 'data0', ['decoding_' decodefolder] );
 
-modelNames = {'CDA','Alpha','NoPCA','PCA'};
+modelNames = {'CDA','Alpha', 'GlobalAlpha','NoPCA','PCA'};
 colors = [0.00 0.45 0.74; 0.85 0.33 0.10; 0.47 0.67 0.19; 0.49 0.18 0.56];
 stats = struct();
 

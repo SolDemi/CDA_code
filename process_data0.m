@@ -75,7 +75,7 @@ sideCfg(2).cond1 = 4;
 sideCfg(2).cond2 = 6;
 
 %% alpha config
-baselinewindow = [-1400, -1100];
+baselinewindow = [-300, -100];
 frep = [8, 12];
 
 %% decoding
@@ -195,15 +195,15 @@ for s = 1:numel(files)
     %% ============================================================
     % 1. CDA decoding
     % =============================================================
-    cfg.doPCA = false;
-
-    CDA = SVM_function_singleSubj(data_CDA, labels, time, cfg);
-    CDA.nCond1 = size(CDA_cond1_all,3);
-    CDA.nCond2 = size(CDA_cond2_all,3);
-    CDA.labels = labels;
-    CDA.channelLabels = channel_care;
-
-    save(fullfile(outputdir, 'CDA', file), 'CDA', '-v7.3');
+    % cfg.doPCA = false;
+    % 
+    % CDA = SVM_function_singleSubj(data_CDA, labels, time, cfg);
+    % CDA.nCond1 = size(CDA_cond1_all,3);
+    % CDA.nCond2 = size(CDA_cond2_all,3);
+    % CDA.labels = labels;
+    % CDA.channelLabels = channel_care;
+    % 
+    % save(fullfile(outputdir, 'CDA', file), 'CDA', '-v7.3');
 
     %% ============================================================
     % 2. lateralized alpha decoding
@@ -223,50 +223,50 @@ for s = 1:numel(files)
     %% ============================================================
     % 3. global alpha decoding
     % =============================================================
-    cfg.doPCA = false;
-
-    GlobalAlpha = SVM_function_singleSubj(data_GlobalAlpha, labels, time, cfg);
-    GlobalAlpha.nCond1 = size(GlobalAlpha_cond1_all,3);
-    GlobalAlpha.nCond2 = size(GlobalAlpha_cond2_all,3);
-    GlobalAlpha.labels = labels;
-    GlobalAlpha.baselinewindow = baselinewindow;
-    GlobalAlpha.frep = frep;
-    GlobalAlpha.channelLabels = global_labels;
-
-    save(fullfile(outputdir, 'GlobalAlpha', file), 'GlobalAlpha', '-v7.3');
+    % cfg.doPCA = false;
+    % 
+    % GlobalAlpha = SVM_function_singleSubj(data_GlobalAlpha, labels, time, cfg);
+    % GlobalAlpha.nCond1 = size(GlobalAlpha_cond1_all,3);
+    % GlobalAlpha.nCond2 = size(GlobalAlpha_cond2_all,3);
+    % GlobalAlpha.labels = labels;
+    % GlobalAlpha.baselinewindow = baselinewindow;
+    % GlobalAlpha.frep = frep;
+    % GlobalAlpha.channelLabels = global_labels;
+    % 
+    % save(fullfile(outputdir, 'GlobalAlpha', file), 'GlobalAlpha', '-v7.3');
 
     %% ============================================================
     % 4. CDA + lateralized alpha, without PCA
     % =============================================================
-    data_NoPCA = cat(1, data_CDA, data_Alpha);
-
-    cfg.doPCA = false;
-
-    NoPCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
-    NoPCA.nCond1 = size(CDA_cond1_all,3);
-    NoPCA.nCond2 = size(CDA_cond2_all,3);
-    NoPCA.labels = labels;
-    NoPCA.baselinewindow = baselinewindow;
-    NoPCA.frep = frep;
-
-    save(fullfile(outputdir, 'NoPCA', file), 'NoPCA', '-v7.3');
+    % data_NoPCA = cat(1, data_CDA, data_Alpha);
+    % 
+    % cfg.doPCA = false;
+    % 
+    % NoPCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
+    % NoPCA.nCond1 = size(CDA_cond1_all,3);
+    % NoPCA.nCond2 = size(CDA_cond2_all,3);
+    % NoPCA.labels = labels;
+    % NoPCA.baselinewindow = baselinewindow;
+    % NoPCA.frep = frep;
+    % 
+    % save(fullfile(outputdir, 'NoPCA', file), 'NoPCA', '-v7.3');
 
     %% ============================================================
     % 5. CDA + lateralized alpha, with PCA
     % =============================================================
-    cfg.doPCA = true;
-
-    PCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
-    PCA.nCond1 = size(CDA_cond1_all,3);
-    PCA.nCond2 = size(CDA_cond2_all,3);
-    PCA.labels = labels;
-    PCA.baselinewindow = baselinewindow;
-    PCA.frep = frep;
-
-    save(fullfile(outputdir, 'PCA', file), 'PCA', '-v7.3');
-
-    fprintf('Finished %s: nCond1 = %d, nCond2 = %d\n\n', ...
-        file, size(CDA_cond1_all,3), size(CDA_cond2_all,3));
+    % cfg.doPCA = true;
+    % 
+    % PCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
+    % PCA.nCond1 = size(CDA_cond1_all,3);
+    % PCA.nCond2 = size(CDA_cond2_all,3);
+    % PCA.labels = labels;
+    % PCA.baselinewindow = baselinewindow;
+    % PCA.frep = frep;
+    % 
+    % save(fullfile(outputdir, 'PCA', file), 'PCA', '-v7.3');
+    % 
+    % fprintf('Finished %s: nCond1 = %d, nCond2 = %d\n\n', ...
+    %     file, size(CDA_cond1_all,3), size(CDA_cond2_all,3));
 end
 
 
