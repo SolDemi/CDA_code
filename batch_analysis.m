@@ -1,5 +1,14 @@
 % batch_analysis
 cd D:\projects\CDA\code
+
+%% process data0
+process_data0
+stat_plot
+
+% control analysis
+addpath("spatial_control_code\")
+process_spatial_control_decoding
+%% process data1
 % calculate cda、alpha（原始数据基线-200ms，无法提取alpha频段，所以重新修改基线至-1000ms）
 cda_alpha
 
@@ -19,5 +28,3 @@ stat_plot
 
 % job
 
-% process data0
-process_data0
