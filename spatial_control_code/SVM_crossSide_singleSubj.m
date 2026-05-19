@@ -19,8 +19,13 @@ times = times(:)';
 
 if ~isempty(cfg.randomSeed), rng(cfg.randomSeed, 'twister'); end
 
-[trainData, times] = apply_temporal_window(trainData, times, cfg.smooth_window, cfg.smooth_step, cfg.timeWindowMode);
-[testData,  ~]     = apply_temporal_window(testData,  times, 0, [], 'centered');
+origTimes = times(:)';
+
+[trainData, times] = apply_temporal_window(trainData, origTimes, ...
+    cfg.smooth_window, cfg.smooth_step, cfg.timeWindowMode);
+
+[testData,  ~] = apply_temporal_window(testData,  origTimes, ...
+    cfg.smooth_window, cfg.smooth_step, cfg.timeWindowMode);
 
 [nCh, nTime, ~] = size(trainData);
 
