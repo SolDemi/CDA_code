@@ -93,7 +93,7 @@ for iter = 1:cfg.nIter
             testTimes = trainTime;
         end
 
-        for testTime = testTimes
+        parfor testTime = testTimes
             Xtest = squeeze(teDat(:, testTime, :))';
             if isvector(Xtest), Xtest = reshape(Xtest, numel(teY), nCh); end
             if cfg.standardize, Xtest = (Xtest - mu_z) ./ sigma_z; end
