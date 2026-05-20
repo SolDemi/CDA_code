@@ -88,7 +88,7 @@ frep = [8, 12];
 
 %% decoding
 files = dir(fullfile(datadir, '*.mat'));
-for s = 1:numel(files)
+for s = 3:numel(files)
     file = files(s).name;
     fprintf('\nNow Processing: %s\n', file);
 
@@ -137,35 +137,35 @@ for s = 1:numel(files)
     % 2) Within-side load decoding
     %    Decode low vs high separately within each side, then average.
     % ============================================================
-    for fi = 1:numel(loadFeatures)
-        featName = loadFeatures{fi};
-
-        cfgLoad = cfg;
-        cfgLoad.balanceFactors = [];
-        cfgLoad.doPCA = strcmpi(featName, 'PCA');
-
-        ResultSide = cell(1, 2);
-        for sidei = 1:2
-            [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
-            ResultSide{sidei} = run_svm_if_enough(dataLoad, labelsLoad, time, cfgLoad);
-            if ~isempty(ResultSide{sidei})
-                ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
-                ResultSide{sidei}.feature = featName;
-                ResultSide{sidei}.sideName = sideDat(sidei).name;
-            end
-        end
-
-        Result = average_two_results(ResultSide{1}, ResultSide{2});
-        if isempty(Result), continue; end
-
-        Result.analysis = 'loadWithinSide';
-        Result.feature = featName;
-        Result.labelMeaning = {'lowLoad', 'highLoad'};
-        Result.sideResults = ResultSide;
-        Result.baselinewindow = baselinewindow;
-        Result.frep = frep;
-        save_result(outputdir, 'loadWithinSide', featName, file, Result);
-    end
+    % for fi = 1:numel(loadFeatures)
+    %     featName = loadFeatures{fi};
+    % 
+    %     cfgLoad = cfg;
+    %     cfgLoad.balanceFactors = [];
+    %     cfgLoad.doPCA = strcmpi(featName, 'PCA');
+    % 
+    %     ResultSide = cell(1, 2);
+    %     for sidei = 1:2
+    %         [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
+    %         ResultSide{sidei} = run_svm_if_enough(dataLoad, labelsLoad, time, cfgLoad);
+    %         if ~isempty(ResultSide{sidei})
+    %             ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
+    %             ResultSide{sidei}.feature = featName;
+    %             ResultSide{sidei}.sideName = sideDat(sidei).name;
+    %         end
+    %     end
+    % 
+    %     Result = average_two_results(ResultSide{1}, ResultSide{2});
+    %     if isempty(Result), continue; end
+    % 
+    %     Result.analysis = 'loadWithinSide';
+    %     Result.feature = featName;
+    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
+    %     Result.sideResults = ResultSide;
+    %     Result.baselinewindow = baselinewindow;
+    %     Result.frep = frep;
+    %     save_result(outputdir, 'loadWithinSide', featName, file, Result);
+    % end
 
     %% ============================================================
     % 3) Side-balanced load decoding
