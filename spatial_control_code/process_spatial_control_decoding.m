@@ -7,8 +7,8 @@
 %
 % Put this file in CDA_code/code or any folder where your existing helper
 % functions are on the MATLAB path:
-% SVM_function_singleSubj.m
-% SVM_crossSide_singleSubj.m
+% LDA_function_singleSubj.m
+% LDA_crossSide_singleSubj.m
 % calculate_high_gamma_power.m
 % balance_trials_by_label.m
 % func_make_superTrials.m
@@ -17,7 +17,7 @@ clear; clc;
 
 maindir   = [erase(pwd, 'code'), 'data0'];
 datadir   = fullfile(maindir, 'data');
-outputdir = fullfile(maindir, 'decoding_SVM_spatialControl');
+outputdir = fullfile(maindir, 'decoding_LDA_spatialControl');
 
 %% folders
 sideFeatures = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
@@ -49,13 +49,13 @@ cfg.timeWindowMode = 'bin';
 cfg.doTimeGeneralization = 1;
 cfg.doPCA = false;
 cfg.nPCs = 5;
-cfg.discrimType = 'Linear';
+cfg.discrimType = 'diaglinear';
 cfg.standardize = 1;
 cfg.doShuffle = true;
 cfg.balanceTrials = true;
 cfg.balanceNPerCell = [];
 cfg.balanceFactors = [];
-cfg.useAUC = 1;
+cfg.useAUC = 0;
 cfg.useParallel = true;
 cfg.verbose = 0;
 cfg.randomSeed = [];
@@ -88,7 +88,7 @@ frep = [8, 12];
 
 %% decoding
 files = dir(fullfile(datadir, '*.mat'));
-for s = 3:numel(files)
+for s = 1:numel(files)
     file = files(s).name;
     fprintf('\nNow Processing: %s\n', file);
 
@@ -120,7 +120,7 @@ for s = 3:numel(files)
         cfgSide.doPCA = false;
         cfgSide.balanceFactors = loadFactor(:);  % side decoding is load-balanced
 
-        Result = run_svm_if_enough(dataSide, labelsSide, time, cfgSide);
+        Result = run_LDA_if_enough(dataSide, labelsSide, time, cfgSide);
         if isempty(Result), continue; end
 
         Result.analysis = 'sideDecoding';
@@ -147,7 +147,7 @@ for s = 3:numel(files)
     %     ResultSide = cell(1, 2);
     %     for sidei = 1:2
     %         [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
-    %         ResultSide{sidei} = run_svm_if_enough(dataLoad, labelsLoad, time, cfgLoad);
+    %         ResultSide{sidei} = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgLoad);
     %         if ~isempty(ResultSide{sidei})
     %             ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
     %             ResultSide{sidei}.feature = featName;
@@ -171,57 +171,57 @@ for s = 3:numel(files)
     % 3) Side-balanced load decoding
     %    Merge two sides, but balance each load x side cell in each iteration.
     % ============================================================
-    for fi = 1:numel(loadFeatures)
-        featName = loadFeatures{fi};
-        [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
-
-        cfgBal = cfg;
-        cfgBal.balanceFactors = sideFactor(:);
-        cfgBal.doPCA = strcmpi(featName, 'PCA');
-
-        Result = run_svm_if_enough(dataLoad, labelsLoad, time, cfgBal);
-        if isempty(Result), continue; end
-
-        Result.analysis = 'loadSideBalanced';
-        Result.feature = featName;
-        Result.labelMeaning = {'lowLoad', 'highLoad'};
-        Result.sideFactor = sideFactor;
-        Result.sideMeaning = {'attendLeft', 'attendRight'};
-        Result.baselinewindow = baselinewindow;
-        Result.frep = frep;
-        save_result(outputdir, 'loadSideBalanced', featName, file, Result);
-    end
-
-    %% ============================================================
-    % 4) Cross-side load generalization
-    %    Train low vs high on one side, test on the other side, average directions.
-    % ============================================================
-    for fi = 1:numel(loadFeatures)
-        featName = loadFeatures{fi};
-
-        cfgCross = cfg;
-        cfgCross.doPCA = strcmpi(featName, 'PCA');
-        cfgCross.useParallel = false;   % cross-side helper is already iteration-level simple loop
-
-        [train12, yTrain12] = make_load_data_one_side(sideDat(1), featName);
-        [test12,  yTest12]  = make_load_data_one_side(sideDat(2), featName);
-        [train21, yTrain21] = make_load_data_one_side(sideDat(2), featName);
-        [test21,  yTest21]  = make_load_data_one_side(sideDat(1), featName);
-
-        Result12 = run_cross_if_enough(train12, yTrain12, test12, yTest12, time, cfgCross);
-        Result21 = run_cross_if_enough(train21, yTrain21, test21, yTest21, time, cfgCross);
-        Result = average_two_results(Result12, Result21);
-        if isempty(Result), continue; end
-
-        Result.analysis = 'loadCrossSide';
-        Result.feature = featName;
-        Result.labelMeaning = {'lowLoad', 'highLoad'};
-        Result.directionMeaning = {'trainAttendLeft_testAttendRight', 'trainAttendRight_testAttendLeft'};
-        Result.directionResults = {Result12, Result21};
-        Result.baselinewindow = baselinewindow;
-        Result.frep = frep;
-        save_result(outputdir, 'loadCrossSide', featName, file, Result);
-    end
+    % for fi = 1:numel(loadFeatures)
+    %     featName = loadFeatures{fi};
+    %     [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
+    % 
+    %     cfgBal = cfg;
+    %     cfgBal.balanceFactors = sideFactor(:);
+    %     cfgBal.doPCA = strcmpi(featName, 'PCA');
+    % 
+    %     Result = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgBal);
+    %     if isempty(Result), continue; end
+    % 
+    %     Result.analysis = 'loadSideBalanced';
+    %     Result.feature = featName;
+    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
+    %     Result.sideFactor = sideFactor;
+    %     Result.sideMeaning = {'attendLeft', 'attendRight'};
+    %     Result.baselinewindow = baselinewindow;
+    %     Result.frep = frep;
+    %     save_result(outputdir, 'loadSideBalanced', featName, file, Result);
+    % end
+    % 
+    % %% ============================================================
+    % % 4) Cross-side load generalization
+    % %    Train low vs high on one side, test on the other side, average directions.
+    % % ============================================================
+    % for fi = 1:numel(loadFeatures)
+    %     featName = loadFeatures{fi};
+    % 
+    %     cfgCross = cfg;
+    %     cfgCross.doPCA = strcmpi(featName, 'PCA');
+    %     cfgCross.useParallel = false;   % cross-side helper is already iteration-level simple loop
+    % 
+    %     [train12, yTrain12] = make_load_data_one_side(sideDat(1), featName);
+    %     [test12,  yTest12]  = make_load_data_one_side(sideDat(2), featName);
+    %     [train21, yTrain21] = make_load_data_one_side(sideDat(2), featName);
+    %     [test21,  yTest21]  = make_load_data_one_side(sideDat(1), featName);
+    % 
+    %     Result12 = run_cross_if_enough(train12, yTrain12, test12, yTest12, time, cfgCross);
+    %     Result21 = run_cross_if_enough(train21, yTrain21, test21, yTest21, time, cfgCross);
+    %     Result = average_two_results(Result12, Result21);
+    %     if isempty(Result), continue; end
+    % 
+    %     Result.analysis = 'loadCrossSide';
+    %     Result.feature = featName;
+    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
+    %     Result.directionMeaning = {'trainAttendLeft_testAttendRight', 'trainAttendRight_testAttendLeft'};
+    %     Result.directionResults = {Result12, Result21};
+    %     Result.baselinewindow = baselinewindow;
+    %     Result.frep = frep;
+    %     save_result(outputdir, 'loadCrossSide', featName, file, Result);
+    % end
 
     fprintf('Finished %s\n', file);
 end
@@ -338,7 +338,7 @@ end
 function [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName)
     % Decode spatial side using all load levels.
     % condition 1/2/3 = side 1; condition 4/5/6 = side 2.
-    % loadFactor keeps low/mid/high balanced across side during SVM iterations.
+    % loadFactor keeps low/mid/high balanced across side during LDA iterations.
     loadLevels = {'low', 'mid', 'high'};
 
     X = cell(2, numel(loadLevels));
@@ -381,7 +381,7 @@ function [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideD
     sideFactor = [ones(numel(y1),1); 2 * ones(numel(y2),1)];
 end
 
-function Result = run_svm_if_enough(data, labels, time, cfg)
+function Result = run_LDA_if_enough(data, labels, time, cfg)
     Result = [];
     labels = labels(:);
     if numel(unique(labels)) ~= 2, return; end
@@ -390,7 +390,7 @@ function Result = run_svm_if_enough(data, labels, time, cfg)
         return;
     end
     if size(data,3) ~= numel(labels), return; end
-    Result = SVM_function_singleSubj(data, labels, time, cfg);
+    Result = LDA_function_singleSubj(data, labels, time, cfg);
     u = unique(labels);
     Result.nClass1 = sum(labels == u(1));
     Result.nClass2 = sum(labels == u(2));
