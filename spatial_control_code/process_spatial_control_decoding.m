@@ -112,26 +112,26 @@ for s = 1:numel(files)
     % 1) Side decoding positive control
     %    Use fixed anatomical features only. Do NOT use contra-minus-ipsi.
     % ============================================================
-    for fi = 1:numel(sideFeatures)
-        featName = sideFeatures{fi};
-        [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName);
-
-        cfgSide = cfg;
-        cfgSide.doPCA = false;
-        cfgSide.balanceFactors = loadFactor(:);  % side decoding is load-balanced
-
-        Result = run_LDA_if_enough(dataSide, labelsSide, time, cfgSide);
-        if isempty(Result), continue; end
-
-        Result.analysis = 'sideDecoding';
-        Result.feature = featName;
-        Result.labelMeaning = {'attendLeft', 'attendRight'};
-        Result.loadFactor = loadFactor;
-        Result.baselinewindow = baselinewindow;
-        Result.frep = frep;
-        Result.channelLabels = channels_for_feature(featName, L_labels, R_labels, global_labels);
-        save_result(outputdir, 'sideDecoding', featName, file, Result);
-    end
+    % for fi = 1:numel(sideFeatures)
+    %     featName = sideFeatures{fi};
+    %     [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName);
+    % 
+    %     cfgSide = cfg;
+    %     cfgSide.doPCA = false;
+    %     cfgSide.balanceFactors = loadFactor(:);  % side decoding is load-balanced
+    % 
+    %     Result = run_LDA_if_enough(dataSide, labelsSide, time, cfgSide);
+    %     if isempty(Result), continue; end
+    % 
+    %     Result.analysis = 'sideDecoding';
+    %     Result.feature = featName;
+    %     Result.labelMeaning = {'attendLeft', 'attendRight'};
+    %     Result.loadFactor = loadFactor;
+    %     Result.baselinewindow = baselinewindow;
+    %     Result.frep = frep;
+    %     Result.channelLabels = channels_for_feature(featName, L_labels, R_labels, global_labels);
+    %     save_result(outputdir, 'sideDecoding', featName, file, Result);
+    % end
 
     %% ============================================================
     % 2) Within-side load decoding
@@ -171,26 +171,26 @@ for s = 1:numel(files)
     % 3) Side-balanced load decoding
     %    Merge two sides, but balance each load x side cell in each iteration.
     % ============================================================
-    % for fi = 1:numel(loadFeatures)
-    %     featName = loadFeatures{fi};
-    %     [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
-    % 
-    %     cfgBal = cfg;
-    %     cfgBal.balanceFactors = sideFactor(:);
-    %     cfgBal.doPCA = strcmpi(featName, 'PCA');
-    % 
-    %     Result = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgBal);
-    %     if isempty(Result), continue; end
-    % 
-    %     Result.analysis = 'loadSideBalanced';
-    %     Result.feature = featName;
-    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
-    %     Result.sideFactor = sideFactor;
-    %     Result.sideMeaning = {'attendLeft', 'attendRight'};
-    %     Result.baselinewindow = baselinewindow;
-    %     Result.frep = frep;
-    %     save_result(outputdir, 'loadSideBalanced', featName, file, Result);
-    % end
+    for fi = 1:numel(loadFeatures)
+        featName = loadFeatures{fi};
+        [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
+
+        cfgBal = cfg;
+        cfgBal.balanceFactors = sideFactor(:);
+        cfgBal.doPCA = strcmpi(featName, 'PCA');
+
+        Result = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgBal);
+        if isempty(Result), continue; end
+
+        Result.analysis = 'loadSideBalanced';
+        Result.feature = featName;
+        Result.labelMeaning = {'lowLoad', 'highLoad'};
+        Result.sideFactor = sideFactor;
+        Result.sideMeaning = {'attendLeft', 'attendRight'};
+        Result.baselinewindow = baselinewindow;
+        Result.frep = frep;
+        save_result(outputdir, 'loadSideBalanced', featName, file, Result);
+    end
     % 
     % %% ============================================================
     % % 4) Cross-side load generalization
@@ -411,8 +411,8 @@ function Result = average_two_results(R1, R2)
     valid = valid(~cellfun(@isempty, valid));
     if isempty(valid), return; end
     Result = valid{1};
-    fieldsToAverage = {'predictAcc', 'AUC', 'predictAccShuffle', 'predictAccMinusShuffle', ...
-        'AUCShuffle', 'AUCMinusShuffle', 'weights', 'predictAccTrain'};
+    fieldsToAverage = {'Acc', 'AUC', 'AccShuffle', 'AccMinusShuffle', ...
+        'AUCShuffle', 'AUCMinusShuffle', 'weights', 'AccTrain'};
     for fi = 1:numel(fieldsToAverage)
         f = fieldsToAverage{fi};
         vals = {};

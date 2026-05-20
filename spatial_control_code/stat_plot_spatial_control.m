@@ -6,12 +6,12 @@
 clear; clc;
 
 maindir = [erase(pwd, 'code'), 'data0'];
-rootdir = fullfile(maindir, 'decoding_SVM_spatialControl');
+rootdir = fullfile(maindir, 'decoding_LDA_spatialControl');
 figdir = fullfile(rootdir, 'group_figures');
 if ~isfolder(figdir), mkdir(figdir); end
 
 metricCfg = struct();
-metricCfg.metric = 'AUCMinusShuffle';
+metricCfg.metric = 'AccMinusShuffle';
 metricCfg.useDiagonal = true;
 
 statCfg = struct();
@@ -26,8 +26,8 @@ statCfg.randomSeed = 1;
 statCfg.verbose = true;
 
 plotCfg = struct();
-plotCfg.ylabel = 'AUC - shuffle';
-plotCfg.eventLines = [0 150];
+plotCfg.ylabel = 'Acc - shuffle';
+plotCfg.eventLines = [0 250];
 plotCfg.eventLineLabels = {'stim on', 'stim off'};
 plotCfg.xlim = [];
 plotCfg.ylim = [];
@@ -37,13 +37,13 @@ loadFeatures = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'
 
 allStats = struct();
 allStats.sideDecoding      = plot_feature_grid(rootdir, 'sideDecoding',      sideFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadWithinSide    = plot_feature_grid(rootdir, 'loadWithinSide',    loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadSideBalanced  = plot_feature_grid(rootdir, 'loadSideBalanced',  loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadCrossSide     = plot_feature_grid(rootdir, 'loadCrossSide',     loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+% allStats.loadWithinSide    = plot_feature_grid(rootdir, 'loadWithinSide',    loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+% allStats.loadSideBalanced  = plot_feature_grid(rootdir, 'loadSideBalanced',  loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+% allStats.loadCrossSide     = plot_feature_grid(rootdir, 'loadCrossSide',     loadFeatures, metricCfg, statCfg, plotCfg, figdir);
 
 %% Maintenance-period summary: side evidence vs controlled load evidence
 summaryCfg = struct();
-summaryCfg.timeWin = [300 900];   % edit this to your preferred maintenance window
+summaryCfg.timeWin = [250 inf];   % edit this to your preferred maintenance window
 summaryCfg.sideAnalysis = 'sideDecoding';
 summaryCfg.loadAnalysis = 'loadSideBalanced';
 summaryCfg.metricCfg = metricCfg;

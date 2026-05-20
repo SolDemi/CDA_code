@@ -1,18 +1,39 @@
 %% ===================== basic config =====================
 
 clear; clc;
+spatialControl = 1;
+cfg = struct();
 
 decodefolder = 'LDA';   % 'SVM' or 'LDA'
 maindir = [ erase(pwd, 'code'), 'data0' ];
-decodingDir = fullfile(maindir, ['decoding_' decodefolder]);
+if spatialControl == 1
+    decodingDir = fullfile(maindir, ['decoding_' decodefolder '_spatialControl'],'sideDecoding');
+    cfg.modelNames = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
+
+    cfg.pairList = {
+        'VoltageRawLR',   'AlphaRawLR'
+        'VoltageLminusR', 'AlphaLminusR'
+        };
+
+else
+    decodingDir = fullfile(maindir, ['decoding_' decodefolder]);
+    cfg.modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA', 'GlobalAlpha'};
+
+    cfg.pairList = {
+        'CDA',   'Alpha'
+        'NoPCA', 'CDA'
+        'NoPCA', 'Alpha'
+        'PCA',   'NoPCA'
+        'GlobalAlpha', 'CDA'
+        'GlobalAlpha', 'PCA'
+        };
+end
 saveDir = fullfile(decodingDir, 'GroupStats');
 
 if ~isfolder(saveDir), mkdir(saveDir); end
 
-cfg = struct();
-cfg.modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA', 'GlobalAlpha'};
-cfg.metric = 'predictAcc';                  % 'AUC' or 'predictAcc'
-cfg.shuffleMetric = 'predictAccShuffle';    % 'AUCShuffle' or 'predictAccShuffle'
+cfg.metric = 'Acc';                  % 'AUC' or 'predictAcc'
+cfg.shuffleMetric = 'AccShuffle';    % 'AUCShuffle' or 'predictAccShuffle'
 cfg.filePattern = '*.mat';
 
 cfg.chance = 0.5;
@@ -37,14 +58,7 @@ cfg.doPairwiseTime = true;
 cfg.doTimeGeneralization = true;
 cfg.doTGPairwise = true;
 
-cfg.pairList = {
-    'CDA',   'Alpha'
-    'NoPCA', 'CDA'
-    'NoPCA', 'Alpha'
-    'PCA',   'NoPCA'
-    'GlobalAlpha', 'CDA'
-    'GlobalAlpha', 'PCA'
-};
+
 
 colors = lines(numel(cfg.modelNames));
 
@@ -202,7 +216,7 @@ if cfg.doDelaySummary
 
     xlim([0.5 numel(validModels)+0.5]);
 
-    ylabel(sprintf('Mean %s - shuffle in %.0f:end ms', cfg.metric, cfg.delayWindow(1)));
+    ylabel(sprintf('Mean %s - shuffle', cfg.metric));
     title(sprintf('Maintenance-period decoding evidence: %s - shuffle', cfg.metric));
 
     box off; grid on;
