@@ -85,7 +85,7 @@ sideCfg(2).condHigh = 6;
 %% alpha config
 baselinewindow = [-1400, -1100];
 frep = [8, 12];
-
+     
 %% decoding
 files = dir(fullfile(datadir, '*.mat'));
 for s = 1:numel(files)
