@@ -2,7 +2,7 @@ clear; clc;
 
 maindir   = [erase(pwd, 'code') , 'data0'];
 datadir   = fullfile(maindir, 'data');
-outputdir = fullfile(maindir, 'decoding_SVM');
+outputdir = fullfile(maindir, 'decoding_LDA');
 
 %% create folders
 folderNames = {'CDA', 'Alpha', 'GlobalAlpha', 'NoPCA', 'PCA'};
@@ -13,7 +13,7 @@ for fi = 1:numel(folderNames)
     end
 end
 
-%% config: consistent with SVM_decoding.m
+%% config: consistent with LDA_decoding.m
 cfg = struct();
 cfg.cvType = 'holdout';
 cfg.trainRatio = 2/3;
@@ -29,14 +29,14 @@ cfg.timeWindowMode = 'bin';
 cfg.doTimeGeneralization = 1;
 cfg.doPCA = false;
 cfg.nPCs = 5;
-cfg.discrimType = 'Linear';
+cfg.discrimType = 'diagLinear';
 cfg.standardize = 1;
 
 cfg.doShuffle = true;
 cfg.balanceTrials = true;
 cfg.balanceNPerCell = [];
 cfg.balanceFactors = [];
-cfg.useAUC = 1;
+cfg.useAUC = 0;
 cfg.useParallel = true;
 cfg.verbose = 0;
 cfg.randomSeed = [];
@@ -75,13 +75,13 @@ sideCfg(2).cond1 = 4;
 sideCfg(2).cond2 = 6;
 
 %% alpha config
-baselinewindow = [-300, -100];
+baselinewindow = [-1400, -1100];
 frep = [8, 12];
 
 %% decoding
 files = dir(fullfile(datadir, '*.mat'));
 
-for s = 1:numel(files)
+for s = 13:numel(files)
 
     file = files(s).name;
     fprintf('Now Processing: %s\n', file);
@@ -192,25 +192,25 @@ for s = 1:numel(files)
         continue
     end
 
-    %% ============================================================
+    % % ============================================================
     % 1. CDA decoding
-    % =============================================================
-    % cfg.doPCA = false;
-    % 
-    % CDA = SVM_function_singleSubj(data_CDA, labels, time, cfg);
-    % CDA.nCond1 = size(CDA_cond1_all,3);
-    % CDA.nCond2 = size(CDA_cond2_all,3);
-    % CDA.labels = labels;
-    % CDA.channelLabels = channel_care;
-    % 
-    % save(fullfile(outputdir, 'CDA', file), 'CDA', '-v7.3');
+    % % =============================================================
+    cfg.doPCA = false;
+
+    CDA = LDA_function_singleSubj(data_CDA, labels, time, cfg);
+    CDA.nCond1 = size(CDA_cond1_all,3);
+    CDA.nCond2 = size(CDA_cond2_all,3);
+    CDA.labels = labels;
+    CDA.channelLabels = channel_care;
+
+    save(fullfile(outputdir, 'CDA', file), 'CDA', '-v7.3');
 
     %% ============================================================
     % 2. lateralized alpha decoding
     % =============================================================
     cfg.doPCA = false;
 
-    Alpha = SVM_function_singleSubj(data_Alpha, labels, time, cfg);
+    Alpha = LDA_function_singleSubj(data_Alpha, labels, time, cfg);
     Alpha.nCond1 = size(Alpha_cond1_all,3);
     Alpha.nCond2 = size(Alpha_cond2_all,3);
     Alpha.labels = labels;
@@ -223,50 +223,50 @@ for s = 1:numel(files)
     %% ============================================================
     % 3. global alpha decoding
     % =============================================================
-    % cfg.doPCA = false;
-    % 
-    % GlobalAlpha = SVM_function_singleSubj(data_GlobalAlpha, labels, time, cfg);
-    % GlobalAlpha.nCond1 = size(GlobalAlpha_cond1_all,3);
-    % GlobalAlpha.nCond2 = size(GlobalAlpha_cond2_all,3);
-    % GlobalAlpha.labels = labels;
-    % GlobalAlpha.baselinewindow = baselinewindow;
-    % GlobalAlpha.frep = frep;
-    % GlobalAlpha.channelLabels = global_labels;
-    % 
-    % save(fullfile(outputdir, 'GlobalAlpha', file), 'GlobalAlpha', '-v7.3');
+    cfg.doPCA = false;
+
+    GlobalAlpha = LDA_function_singleSubj(data_GlobalAlpha, labels, time, cfg);
+    GlobalAlpha.nCond1 = size(GlobalAlpha_cond1_all,3);
+    GlobalAlpha.nCond2 = size(GlobalAlpha_cond2_all,3);
+    GlobalAlpha.labels = labels;
+    GlobalAlpha.baselinewindow = baselinewindow;
+    GlobalAlpha.frep = frep;
+    GlobalAlpha.channelLabels = global_labels;
+
+    save(fullfile(outputdir, 'GlobalAlpha', file), 'GlobalAlpha', '-v7.3');
 
     %% ============================================================
     % 4. CDA + lateralized alpha, without PCA
     % =============================================================
-    % data_NoPCA = cat(1, data_CDA, data_Alpha);
-    % 
-    % cfg.doPCA = false;
-    % 
-    % NoPCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
-    % NoPCA.nCond1 = size(CDA_cond1_all,3);
-    % NoPCA.nCond2 = size(CDA_cond2_all,3);
-    % NoPCA.labels = labels;
-    % NoPCA.baselinewindow = baselinewindow;
-    % NoPCA.frep = frep;
-    % 
-    % save(fullfile(outputdir, 'NoPCA', file), 'NoPCA', '-v7.3');
+    data_NoPCA = cat(1, data_CDA, data_Alpha);
+
+    cfg.doPCA = false;
+
+    NoPCA = LDA_function_singleSubj(data_NoPCA, labels, time, cfg);
+    NoPCA.nCond1 = size(CDA_cond1_all,3);
+    NoPCA.nCond2 = size(CDA_cond2_all,3);
+    NoPCA.labels = labels;
+    NoPCA.baselinewindow = baselinewindow;
+    NoPCA.frep = frep;
+
+    save(fullfile(outputdir, 'NoPCA', file), 'NoPCA', '-v7.3');
 
     %% ============================================================
     % 5. CDA + lateralized alpha, with PCA
     % =============================================================
-    % cfg.doPCA = true;
-    % 
-    % PCA = SVM_function_singleSubj(data_NoPCA, labels, time, cfg);
-    % PCA.nCond1 = size(CDA_cond1_all,3);
-    % PCA.nCond2 = size(CDA_cond2_all,3);
-    % PCA.labels = labels;
-    % PCA.baselinewindow = baselinewindow;
-    % PCA.frep = frep;
-    % 
-    % save(fullfile(outputdir, 'PCA', file), 'PCA', '-v7.3');
-    % 
-    % fprintf('Finished %s: nCond1 = %d, nCond2 = %d\n\n', ...
-    %     file, size(CDA_cond1_all,3), size(CDA_cond2_all,3));
+    cfg.doPCA = true;
+
+    PCA = LDA_function_singleSubj(data_NoPCA, labels, time, cfg);
+    PCA.nCond1 = size(CDA_cond1_all,3);
+    PCA.nCond2 = size(CDA_cond2_all,3);
+    PCA.labels = labels;
+    PCA.baselinewindow = baselinewindow;
+    PCA.frep = frep;
+
+    save(fullfile(outputdir, 'PCA', file), 'PCA', '-v7.3');
+
+    fprintf('Finished %s: nCond1 = %d, nCond2 = %d\n\n', ...
+        file, size(CDA_cond1_all,3), size(CDA_cond2_all,3));
 end
 
 

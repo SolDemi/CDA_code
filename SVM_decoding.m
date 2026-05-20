@@ -64,7 +64,7 @@ for s = numel(files)-1:-1:1
     % CDA.ACC = subj_CDA.predictAcc;
 
     save([outputdir 'CDA\' file], "CDA")
-    %
+    
     % % decode load based on alpha band
     data2 = cat( 1, alpha.trial.diff_2, alpha.trial.diff_6 ); % trials x channels x time
     data2  = permute(data2, [2,3,1]);

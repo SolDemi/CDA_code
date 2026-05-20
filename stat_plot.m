@@ -2,7 +2,7 @@
 
 clear; clc;
 
-decodefolder = 'SVM';   % 'SVM' or 'LDA'
+decodefolder = 'LDA';   % 'SVM' or 'LDA'
 maindir = [ erase(pwd, 'code'), 'data0' ];
 decodingDir = fullfile(maindir, ['decoding_' decodefolder]);
 saveDir = fullfile(decodingDir, 'GroupStats');
@@ -11,8 +11,8 @@ if ~isfolder(saveDir), mkdir(saveDir); end
 
 cfg = struct();
 cfg.modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA', 'GlobalAlpha'};
-cfg.metric = 'AUC';                  % 'AUC' or 'predictAcc'
-cfg.shuffleMetric = 'AUCShuffle';    % 'AUCShuffle' or 'predictAccShuffle'
+cfg.metric = 'predictAcc';                  % 'AUC' or 'predictAcc'
+cfg.shuffleMetric = 'predictAccShuffle';    % 'AUCShuffle' or 'predictAccShuffle'
 cfg.filePattern = '*.mat';
 
 cfg.chance = 0.5;

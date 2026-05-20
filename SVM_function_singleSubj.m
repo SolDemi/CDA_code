@@ -24,9 +24,9 @@ function result = SVM_function_singleSubj(eegData, labels, times, cfg)
 %   cfg.standardize          : z-score using training data default = false
 %
 % Outputs:
-%   result.predictAcc, result.predictAccTrain, result.weights
+%   result.Acc, result.AccTrain, result.weights
 %   result.AUC only if cfg.useAUC = true
-%   result.predictAccShuffle, result.predictAccMinusShuffle if doShuffle = true
+%   result.AccShuffle, result.AccMinusShuffle if doShuffle = true
 %   result.AUCShuffle, result.AUCMinusShuffle only if doShuffle && useAUC
 
 if nargin < 4 || isempty(cfg), cfg = struct(); end
@@ -66,7 +66,7 @@ else
     nSplits = cfg.nFolds;
 end
 
-predictAcc_all = nan(nTime, nTime, nSplits, cfg.nIter);
+Acc_all = nan(nTime, nTime, nSplits, cfg.nIter);
 trainAcc_all   = nan(nSplits, nTime, cfg.nIter);
 weights_all    = nan(nCh, nTime, nSplits, cfg.nIter);
 
@@ -77,14 +77,14 @@ else
 end
 
 if cfg.doShuffle
-    predictAccShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
+    AccShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
     if cfg.useAUC
         AUCShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
     else
         AUCShuffle_all = [];
     end
 else
-    predictAccShuffle_all = [];
+    AccShuffle_all = [];
     AUCShuffle_all = [];
 end
 
@@ -93,11 +93,11 @@ balanceInfo = cell(cfg.nIter, 1);
 % Parallelization is intentionally placed at the iteration level.
 if cfg.useParallel
     parfor sampi = 1:cfg.nIter
-        [predictAcc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-            predictAccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
+        [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
+            AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
             eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg);
 
-        predictAcc_all(:,:,:,sampi) = predictAcc_iter;
+        Acc_all(:,:,:,sampi) = Acc_iter;
         trainAcc_all(:,:,sampi) = trainAcc_iter;
         weights_all(:,:,:,sampi) = weights_iter;
         balanceInfo{sampi} = balanceInfo_iter;
@@ -106,7 +106,7 @@ if cfg.useParallel
             AUC_all(:,:,:,sampi) = AUC_iter;
         end
         if cfg.doShuffle
-            predictAccShuffle_all(:,:,:,sampi) = predictAccShuffle_iter;
+            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
             if cfg.useAUC
                 AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter;
             end
@@ -117,11 +117,11 @@ if cfg.useParallel
     end
 else
     for sampi = 1:cfg.nIter
-        [predictAcc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-            predictAccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
+        [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
+            AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
             eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg);
 
-        predictAcc_all(:,:,:,sampi) = predictAcc_iter;
+        Acc_all(:,:,:,sampi) = Acc_iter;
         trainAcc_all(:,:,sampi) = trainAcc_iter;
         weights_all(:,:,:,sampi) = weights_iter;
         balanceInfo{sampi} = balanceInfo_iter;
@@ -130,7 +130,7 @@ else
             AUC_all(:,:,:,sampi) = AUC_iter;
         end
         if cfg.doShuffle
-            predictAccShuffle_all(:,:,:,sampi) = predictAccShuffle_iter;
+            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
             if cfg.useAUC
                 AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter;
             end
@@ -141,7 +141,7 @@ else
     end
 end
 
-predictAcc = squeeze(mean(mean(predictAcc_all, 3, 'omitnan'), 4, 'omitnan'));
+Acc = squeeze(mean(mean(Acc_all, 3, 'omitnan'), 4, 'omitnan'));
 weights    = squeeze(mean(mean(weights_all, 3, 'omitnan'), 4, 'omitnan'));
 trainAcc   = squeeze(mean(mean(trainAcc_all, 1, 'omitnan'), 3, 'omitnan'));
 
@@ -150,18 +150,18 @@ if cfg.useAUC
 end
 
 if ~cfg.doTimeGeneralization
-    predictAcc = keep_diagonal_only(predictAcc);
+    Acc = keep_diagonal_only(Acc);
     if cfg.useAUC
         AUC = keep_diagonal_only(AUC);
     end
 end
 
 result = struct();
-result.predictAcc = predictAcc;
+result.Acc = Acc;
 if cfg.useAUC
     result.AUC = AUC;
 end
-result.predictAccTrain = trainAcc(:);
+result.AccTrain = trainAcc(:);
 result.weights = weights;
 result.times = times(:);
 result.cfg = cfg;
@@ -169,13 +169,13 @@ result.classLabelsOriginal = uLabels;
 result.balanceInfo = balanceInfo;
 
 if cfg.doShuffle
-    predictAccShuffle = squeeze(mean(mean(predictAccShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
+    AccShuffle = squeeze(mean(mean(AccShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
     if ~cfg.doTimeGeneralization
-        predictAccShuffle = keep_diagonal_only(predictAccShuffle);
+        AccShuffle = keep_diagonal_only(AccShuffle);
     end
 
-    result.predictAccShuffle = predictAccShuffle;
-    result.predictAccMinusShuffle = predictAcc - predictAccShuffle;
+    result.AccShuffle = AccShuffle;
+    result.AccMinusShuffle = Acc - AccShuffle;
 
     if cfg.useAUC
         AUCShuffle = squeeze(mean(mean(AUCShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
@@ -234,15 +234,15 @@ cfg.kernelFunction = char(cfg.kernelFunction);
 end
 
 %% ========================================================================
-function [predictAcc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-    predictAccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
+function [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
+    AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
     eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg)
 
 if ~isempty(cfg.randomSeed)
     rng(cfg.randomSeed + sampi - 1, 'twister');
 end
 
-predictAcc_iter = nan(nTime, nTime, nSplits);
+Acc_iter = nan(nTime, nTime, nSplits);
 trainAcc_iter   = nan(nSplits, nTime);
 weights_iter    = nan(nCh, nTime, nSplits);
 
@@ -253,14 +253,14 @@ else
 end
 
 if cfg.doShuffle
-    predictAccShuffle_iter = nan(nTime, nTime, nSplits);
+    AccShuffle_iter = nan(nTime, nTime, nSplits);
     if cfg.useAUC
         AUCShuffle_iter = nan(nTime, nTime, nSplits);
     else
         AUCShuffle_iter = [];
     end
 else
-    predictAccShuffle_iter = [];
+    AccShuffle_iter = [];
     AUCShuffle_iter = [];
 end
 
@@ -317,7 +317,7 @@ for spliti = 1:nSplits
             allTrials, trainIdx, testIdx, trainY, testY, trainYShuffleByTime{trainTime}, ...
             trainTime, nTime, nCh, cfg);
 
-        predictAcc_iter(trainTime,:,spliti) = accRow;
+        Acc_iter(trainTime,:,spliti) = accRow;
         trainAcc_iter(spliti,trainTime) = trainAccVal;
         weights_iter(:,trainTime,spliti) = weightVec;
 
@@ -325,7 +325,7 @@ for spliti = 1:nSplits
             AUC_iter(trainTime,:,spliti) = aucRow;
         end
         if cfg.doShuffle
-            predictAccShuffle_iter(trainTime,:,spliti) = accShufRow;
+            AccShuffle_iter(trainTime,:,spliti) = accShufRow;
             if cfg.useAUC
                 AUCShuffle_iter(trainTime,:,spliti) = aucShufRow;
             end
