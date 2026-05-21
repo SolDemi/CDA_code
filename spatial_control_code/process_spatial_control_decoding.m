@@ -137,35 +137,35 @@ for s = 1:numel(files)
     % 2) Within-side load decoding
     %    Decode low vs high separately within each side, then average.
     % ============================================================
-    for fi = 1:numel(loadFeatures)
-        featName = loadFeatures{fi};
-
-        cfgLoad = cfg;
-        cfgLoad.balanceFactors = [];
-        cfgLoad.doPCA = strcmpi(featName, 'PCA');
-
-        ResultSide = cell(1, 2);
-        for sidei = 1:2
-            [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
-            ResultSide{sidei} = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgLoad);
-            if ~isempty(ResultSide{sidei})
-                ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
-                ResultSide{sidei}.feature = featName;
-                ResultSide{sidei}.sideName = sideDat(sidei).name;
-            end
-        end
-
-        Result = average_two_results(ResultSide{1}, ResultSide{2});
-        if isempty(Result), continue; end
-
-        Result.analysis = 'loadWithinSide';
-        Result.feature = featName;
-        Result.labelMeaning = {'lowLoad', 'highLoad'};
-        Result.sideResults = ResultSide;
-        Result.baselinewindow = baselinewindow;
-        Result.frep = frep;
-        save_result(outputdir, 'loadWithinSide', featName, file, Result);
-    end
+    % for fi = 1:numel(loadFeatures)
+    %     featName = loadFeatures{fi};
+    % 
+    %     cfgLoad = cfg;
+    %     cfgLoad.balanceFactors = [];
+    %     cfgLoad.doPCA = strcmpi(featName, 'PCA');
+    % 
+    %     ResultSide = cell(1, 2);
+    %     for sidei = 1:2
+    %         [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
+    %         ResultSide{sidei} = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgLoad);
+    %         if ~isempty(ResultSide{sidei})
+    %             ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
+    %             ResultSide{sidei}.feature = featName;
+    %             ResultSide{sidei}.sideName = sideDat(sidei).name;
+    %         end
+    %     end
+    % 
+    %     Result = average_two_results(ResultSide{1}, ResultSide{2});
+    %     if isempty(Result), continue; end
+    % 
+    %     Result.analysis = 'loadWithinSide';
+    %     Result.feature = featName;
+    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
+    %     Result.sideResults = ResultSide;
+    %     Result.baselinewindow = baselinewindow;
+    %     Result.frep = frep;
+    %     save_result(outputdir, 'loadWithinSide', featName, file, Result);
+    % end
 
     %% ============================================================
     % 3) Side-balanced load decoding
@@ -196,32 +196,32 @@ for s = 1:numel(files)
     % % 4) Cross-side load generalization
     % %    Train low vs high on one side, test on the other side, average directions.
     % % ============================================================
-    % for fi = 1:numel(loadFeatures)
-    %     featName = loadFeatures{fi};
-    % 
-    %     cfgCross = cfg;
-    %     cfgCross.doPCA = strcmpi(featName, 'PCA');
-    %     cfgCross.useParallel = false;   % cross-side helper is already iteration-level simple loop
-    % 
-    %     [train12, yTrain12] = make_load_data_one_side(sideDat(1), featName);
-    %     [test12,  yTest12]  = make_load_data_one_side(sideDat(2), featName);
-    %     [train21, yTrain21] = make_load_data_one_side(sideDat(2), featName);
-    %     [test21,  yTest21]  = make_load_data_one_side(sideDat(1), featName);
-    % 
-    %     Result12 = run_cross_if_enough(train12, yTrain12, test12, yTest12, time, cfgCross);
-    %     Result21 = run_cross_if_enough(train21, yTrain21, test21, yTest21, time, cfgCross);
-    %     Result = average_two_results(Result12, Result21);
-    %     if isempty(Result), continue; end
-    % 
-    %     Result.analysis = 'loadCrossSide';
-    %     Result.feature = featName;
-    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
-    %     Result.directionMeaning = {'trainAttendLeft_testAttendRight', 'trainAttendRight_testAttendLeft'};
-    %     Result.directionResults = {Result12, Result21};
-    %     Result.baselinewindow = baselinewindow;
-    %     Result.frep = frep;
-    %     save_result(outputdir, 'loadCrossSide', featName, file, Result);
-    % end
+    for fi = 1:numel(loadFeatures)
+        featName = loadFeatures{fi};
+
+        cfgCross = cfg;
+        cfgCross.doPCA = strcmpi(featName, 'PCA');
+        cfgCross.useParallel = false;   % cross-side helper is already iteration-level simple loop
+
+        [train12, yTrain12] = make_load_data_one_side(sideDat(1), featName);
+        [test12,  yTest12]  = make_load_data_one_side(sideDat(2), featName);
+        [train21, yTrain21] = make_load_data_one_side(sideDat(2), featName);
+        [test21,  yTest21]  = make_load_data_one_side(sideDat(1), featName);
+
+        Result12 = run_cross_if_enough(train12, yTrain12, test12, yTest12, time, cfgCross);
+        Result21 = run_cross_if_enough(train21, yTrain21, test21, yTest21, time, cfgCross);
+        Result = average_two_results(Result12, Result21);
+        if isempty(Result), continue; end
+
+        Result.analysis = 'loadCrossSide';
+        Result.feature = featName;
+        Result.labelMeaning = {'lowLoad', 'highLoad'};
+        Result.directionMeaning = {'trainAttendLeft_testAttendRight', 'trainAttendRight_testAttendLeft'};
+        Result.directionResults = {Result12, Result21};
+        Result.baselinewindow = baselinewindow;
+        Result.frep = frep;
+        save_result(outputdir, 'loadCrossSide', featName, file, Result);
+    end
 
     fprintf('Finished %s\n', file);
 end
