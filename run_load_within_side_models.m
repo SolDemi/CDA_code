@@ -4,15 +4,15 @@ function Results = run_load_within_side_models(cda, alpha, cfg, decoderFcn)
 % trials, then average the two side-specific decoding results.
 %
 % Required input data format
-%   cda.trial / alpha.trial must contain side-specific lateralized fields,
-%   preferably:
+%   cda.trial / alpha.trial must contain side-specific lateralized fields:
 %       diff_L_2, diff_L_6, diff_R_2, diff_R_6
-%   The function also supports condition-specific fields such as:
-%       diff_L_C2, diff_L_S2, diff_R_C2, diff_R_S2
-%       diff_L_C6, diff_L_S6, diff_R_C6, diff_R_S6
+%   Global alpha controls require:
+%       global_L_2, global_L_6, global_R_2, global_R_6
+%       globalMean_L_2, globalMean_L_6, globalMean_R_2, globalMean_R_6
 %
 % Output
-%   Results.CDA, Results.Alpha, Results.NoPCA, Results.PCA
+%   Results.CDA, Results.Alpha, Results.GlobalAlpha, Results.GlobalAlphaMean,
+%   Results.NoPCA, Results.PCA
 % Each result struct contains averaged fields such as Acc, AccShuffle, AUC,
 % and AUCShuffle, so it can be read directly by stat_plot.m.
 
@@ -31,8 +31,10 @@ if ~any(timeIdx)
 end
 times = times(timeIdx);
 
-cdaSide   = extract_side_load_arrays(cda.trial,   'diff', timeIdx);
-alphaSide = extract_side_load_arrays(alpha.trial, 'diff', timeIdx);
+cdaSide         = extract_side_load_arrays(cda.trial,   'diff',       timeIdx);
+alphaSide       = extract_side_load_arrays(alpha.trial, 'diff',       timeIdx);
+globalAlphaSide = extract_side_load_arrays(alpha.trial, 'global',     timeIdx);
+globalMeanSide  = extract_side_load_arrays(alpha.trial, 'globalMean', timeIdx);
 
 Results = struct();
 
@@ -43,6 +45,14 @@ Results.CDA = decode_one_model(cdaSide, times, cfgModel, decoderFcn, 'CDA');
 cfgModel = cfg;
 cfgModel.doPCA = false;
 Results.Alpha = decode_one_model(alphaSide, times, cfgModel, decoderFcn, 'Alpha');
+
+cfgModel = cfg;
+cfgModel.doPCA = false;
+Results.GlobalAlpha = decode_one_model(globalAlphaSide, times, cfgModel, decoderFcn, 'GlobalAlpha');
+
+cfgModel = cfg;
+cfgModel.doPCA = false;
+Results.GlobalAlphaMean = decode_one_model(globalMeanSide, times, cfgModel, decoderFcn, 'GlobalAlphaMean');
 
 combinedSide = concatenate_feature_sets(cdaSide, alphaSide);
 
@@ -99,7 +109,7 @@ if isempty(X)
     error(['Missing side-specific %s field for side %s, load %s.\n' ...
            'Expected fields like %s_L_%s / %s_R_%s, or condition fields like %s_L_C%s and %s_L_S%s.\n' ...
            'Current trial fields begin with: %s\n' ...
-           'This cannot be reconstructed from collapsed diff_2/diff_6 alone; rerun cda_alpha.m after adding side-specific fields.'], ...
+           'This cannot be reconstructed from collapsed fields alone; rerun cda_alpha.m after adding side-specific fields.'], ...
            prefix, side, loadStr, prefix, loadStr, prefix, loadStr, prefix, loadStr, prefix, loadStr, preview);
 end
 
