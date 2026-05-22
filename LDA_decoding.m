@@ -10,7 +10,7 @@ end
 
 outputdir = fullfile(statRoot, 'decoding_LDA_spatialControl', 'loadWithinSide');
 
-modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA'};
+modelNames = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
 for i = 1:numel(modelNames)
     outFolder = fullfile(outputdir, modelNames{i});
     if ~isfolder(outFolder), mkdir(outFolder); end
