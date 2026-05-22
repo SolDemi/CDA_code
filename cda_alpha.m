@@ -33,7 +33,7 @@ condPairs = {'C2','L_C2','R_C2'; ...
 pre_timepoint  = 250;   % -1000 ms at 250 Hz
 post_timepoint = 249;   % +996 ms
 erp_baseline_window_ms   = [-200 0];      % for ERP/CDA voltage baseline
-alpha_baseline_window_ms = [-300 -100];   % for alpha power baseline
+alpha_baseline_window_ms = [-400 -100];   % for alpha power baseline
 frep = [8 12];
 
 % Absolute left/right posterior CDA channels
