@@ -4,6 +4,7 @@
 % The saved cda/alpha structs keep both:
 %   1) collapsed load fields: diff_2, diff_6
 %   2) side-specific load fields: diff_L_2, diff_R_2, diff_L_6, diff_R_6
+%   3) global alpha controls: global_L/R_2/6 and globalMean_L/R_2/6
 % The side-specific fields are required for within-side load decoding.
 
 dbstop if error
@@ -71,6 +72,8 @@ for s = 1:length(subjects)
 
     leftIdx  = get_channel_indices(erp.allChans, leftElecLabels);
     rightIdx = get_channel_indices(erp.allChans, rightElecLabels);
+    globalAlphaIdx = [leftIdx, rightIdx];
+    globalAlphaElecLabels = [leftElecLabels, rightElecLabels];
 
     % Relative pair labels after left/right remapping
     relPairLabels = {'O1/O2','OL/OR','P3/P4','PO3/PO4','T5/T6'};
@@ -218,6 +221,8 @@ for s = 1:length(subjects)
     alpha.relPairLabels = relPairLabels;
     alpha.leftElecLabels = leftElecLabels;
     alpha.rightElecLabels = rightElecLabels;
+    alpha.globalAlphaElecLabels = globalAlphaElecLabels;
+    alpha.globalAlphaDescription = 'GlobalAlpha uses absolute posterior alpha channels [leftElecLabels, rightElecLabels]; GlobalAlphaMean averages these channels within each trial and time point.';
     alpha.trial = struct();
     alpha.trials_per_cond = zeros(1, size(condPairs,1));
     alpha.trials_per_side_cond = zeros(size(condPairs,1), 2); % columns: L, R
@@ -234,6 +239,17 @@ for s = 1:length(subjects)
         alpha.trial.(fn) = run_power_function_keep_trial_chan_time( ...
             Xraw, erp.srate, erp.times_ms, alpha_baseline_window_ms, frep);
         % output: trials x channels x time
+    end
+
+    % Add global posterior alpha fields before removing condition-level raw fields.
+    for p = 1:size(condPairs,1)
+        outName   = condPairs{p,1};
+        leftName  = condPairs{p,2};
+        rightName = condPairs{p,3};
+
+        alpha.trial = add_global_alpha_condition_fields( ...
+            alpha.trial, alpha.trial.(leftName), alpha.trial.(rightName), ...
+            outName, globalAlphaIdx);
     end
 
     % Build contra/ipsi alpha, preserving side-specific load fields.
@@ -254,12 +270,16 @@ for s = 1:length(subjects)
     end
 
     alpha.trial = add_load_level_fields(alpha.trial);
+    alpha.trial = add_global_alpha_load_level_fields(alpha.trial);
     alpha.trial = rmfield(alpha.trial, intersect(conditions_LR, fieldnames(alpha.trial)));
     alpha.trial = remove_condition_level_relative_fields(alpha.trial);
+    alpha.trial = remove_condition_level_global_alpha_fields(alpha.trial);
 
     alpha.trials_per_ss = [size(alpha.trial.diff_2,1), size(alpha.trial.diff_6,1)];
     alpha.trials_per_side_load = [size(alpha.trial.diff_L_2,1), size(alpha.trial.diff_L_6,1); ...
                                   size(alpha.trial.diff_R_2,1), size(alpha.trial.diff_R_6,1)]; % rows: L/R; columns: load 2/6
+    alpha.trials_per_global_side_load = [size(alpha.trial.global_L_2,1), size(alpha.trial.global_L_6,1); ...
+                                         size(alpha.trial.global_R_2,1), size(alpha.trial.global_R_6,1)];
     alpha.min_trials_per_cond = min(alpha.trials_per_cond);
     alpha.min_trials_per_ss   = min(alpha.trials_per_ss);
     alpha.min_trials_per_side_load = min(alpha.trials_per_side_load, [], 'all');
@@ -311,6 +331,24 @@ function trial = add_relative_condition_fields(trial, XL, XR, outName, leftIdx, 
     trial.(['diff_'   outName]) = cat(1, diffL,   diffR);
 end
 
+function trial = add_global_alpha_condition_fields(trial, XL, XR, outName, globalAlphaIdx)
+% Add absolute-posterior global alpha fields for one condition.
+% global_* keeps all selected posterior channels.
+% globalMean_* averages those channels, producing a 1-channel feature.
+
+    globalL = XL(:, globalAlphaIdx, :);
+    globalR = XR(:, globalAlphaIdx, :);
+
+    trial.(['global_L_' outName]) = globalL;
+    trial.(['global_R_' outName]) = globalR;
+    trial.(['global_'   outName]) = cat(1, globalL, globalR);
+
+    trial.(['globalMean_L_' outName]) = mean(globalL, 2, 'omitnan');
+    trial.(['globalMean_R_' outName]) = mean(globalR, 2, 'omitnan');
+    trial.(['globalMean_'   outName]) = cat(1, trial.(['globalMean_L_' outName]), ...
+                                             trial.(['globalMean_R_' outName]));
+end
+
 function trial = add_load_level_fields(trial)
 % Collapse C/S conditions within each load, while keeping side information.
 
@@ -344,12 +382,70 @@ function trial = add_load_level_fields(trial)
     end
 end
 
+function trial = add_global_alpha_load_level_fields(trial)
+% Collapse C/S conditions within each load for global alpha controls.
+
+    metrics = {'global', 'globalMean'};
+    sides = {'L', 'R'};
+    loadDefs = {
+        '2', {'C2', 'S2'}
+        '6', {'C6', 'S6'}
+        };
+
+    for li = 1:size(loadDefs,1)
+        loadName = loadDefs{li,1};
+        conds = loadDefs{li,2};
+
+        for mi = 1:numel(metrics)
+            metric = metrics{mi};
+
+            trial.(sprintf('%s_%s', metric, loadName)) = cat(1, ...
+                trial.(sprintf('%s_%s', metric, conds{1})), ...
+                trial.(sprintf('%s_%s', metric, conds{2})));
+
+            for si = 1:numel(sides)
+                side = sides{si};
+                trial.(sprintf('%s_%s_%s', metric, side, loadName)) = cat(1, ...
+                    trial.(sprintf('%s_%s_%s', metric, side, conds{1})), ...
+                    trial.(sprintf('%s_%s_%s', metric, side, conds{2})));
+            end
+        end
+    end
+end
+
 function trial = remove_condition_level_relative_fields(trial)
 % Remove intermediate C2/C6/S2/S6 relative fields after final load-level
 % fields are constructed. This keeps file size manageable while preserving
 % all fields needed for ordinary and within-side decoding.
 
     metrics = {'contra', 'ipsi', 'diff'};
+    sides = {'', 'L', 'R'};
+    conds = {'C2', 'C6', 'S2', 'S6'};
+    removeList = {};
+
+    for mi = 1:numel(metrics)
+        for si = 1:numel(sides)
+            for ci = 1:numel(conds)
+                if isempty(sides{si})
+                    removeList{end+1,1} = sprintf('%s_%s', metrics{mi}, conds{ci}); %#ok<AGROW>
+                else
+                    removeList{end+1,1} = sprintf('%s_%s_%s', metrics{mi}, sides{si}, conds{ci}); %#ok<AGROW>
+                end
+            end
+        end
+    end
+
+    fieldsToRemove = intersect(removeList, fieldnames(trial));
+    if ~isempty(fieldsToRemove)
+        trial = rmfield(trial, fieldsToRemove);
+    end
+end
+
+function trial = remove_condition_level_global_alpha_fields(trial)
+% Remove intermediate condition-level global alpha fields after load-level
+% global/globalMean fields are constructed.
+
+    metrics = {'global', 'globalMean'};
     sides = {'', 'L', 'R'};
     conds = {'C2', 'C6', 'S2', 'S6'};
     removeList = {};
