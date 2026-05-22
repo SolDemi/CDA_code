@@ -25,7 +25,7 @@ subjects = [1:8,10:18,20:26,28:34,36:47,49:52,54:63,65:68,70,73:74,...
     158:160,162:172,174:175,178:181,184:191,194,196:198,203:204,206:219];
 
 datadir = pwd;
-maindir = erase(datadir,'\code');
+maindir = [ erase(datadir,'code') 'data1'];
 homedir = [maindir,'\data_raw\'];
 rawfiles = dir(homedir);
 output_dir = [maindir '\cda_alpha\'];
