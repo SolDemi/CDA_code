@@ -3,18 +3,15 @@ function Results = run_load_within_side_models(cda, alpha, cfg, decoderFcn)
 % Decode low vs high load separately within attended-left and attended-right
 % trials, then average the two side-specific decoding results.
 %
-% Required input data format
-%   cda.trial / alpha.trial must contain side-specific lateralized fields:
-%       diff_L_2, diff_L_6, diff_R_2, diff_R_6
-%   Global alpha controls require:
-%       global_L_2, global_L_6, global_R_2, global_R_6
-%       globalMean_L_2, globalMean_L_6, globalMean_R_2, globalMean_R_6
+% Minimal-storage compatible version.
+% cda_alpha.m only stores absolute posterior left/right hemisphere data:
+%   left_L_2, right_L_2, left_R_2, right_R_2, and same for load 6.
 %
-% Output
-%   Results.CDA, Results.Alpha, Results.GlobalAlpha, Results.GlobalAlphaMean,
-%   Results.NoPCA, Results.PCA
-% Each result struct contains averaged fields such as Acc, AccShuffle, AUC,
-% and AUCShuffle, so it can be read directly by stat_plot.m.
+% This function constructs features on demand:
+%   CDA / Alpha      : contra - ipsi within each attended side
+%   GlobalAlpha      : [left posterior channels, right posterior channels]
+%   GlobalAlphaMean  : mean over global posterior alpha channels
+%   NoPCA / PCA      : [CDA features, lateralized alpha features]
 
 if nargin < 4 || isempty(decoderFcn)
     error('A decoder function handle, e.g. @LDA_function_singleSubj, is required.');
@@ -31,10 +28,10 @@ if ~any(timeIdx)
 end
 times = times(timeIdx);
 
-cdaSide         = extract_side_load_arrays(cda.trial,   'diff',       timeIdx);
-alphaSide       = extract_side_load_arrays(alpha.trial, 'diff',       timeIdx);
-globalAlphaSide = extract_side_load_arrays(alpha.trial, 'global',     timeIdx);
-globalMeanSide  = extract_side_load_arrays(alpha.trial, 'globalMean', timeIdx);
+cdaSide         = construct_lateralized_side_load_features(cda.trial,   timeIdx);
+alphaSide       = construct_lateralized_side_load_features(alpha.trial, timeIdx);
+globalAlphaSide = construct_global_alpha_side_load_features(alpha.trial, timeIdx, false);
+globalMeanSide  = construct_global_alpha_side_load_features(alpha.trial, timeIdx, true);
 
 Results = struct();
 
@@ -67,144 +64,126 @@ Results.PCA = decode_one_model(combinedSide, times, cfgModel, decoderFcn, 'PCA')
 end
 
 %% ========================================================================
-function sideData = extract_side_load_arrays(T, prefix, timeIdx)
+function sideData = construct_lateralized_side_load_features(T, timeIdx)
+% Return contra-minus-ipsi features separately for attended-left and
+% attended-right trials.
+%
+% For attended-left trials:  contra = right posterior, ipsi = left posterior.
+% For attended-right trials: contra = left posterior,  ipsi = right posterior.
 
 sideData = struct();
-
-sideData.L.low  = pick_load_array(T, prefix, 'L', 2, timeIdx);
-sideData.L.high = pick_load_array(T, prefix, 'L', 6, timeIdx);
-sideData.R.low  = pick_load_array(T, prefix, 'R', 2, timeIdx);
-sideData.R.high = pick_load_array(T, prefix, 'R', 6, timeIdx);
+sideData.L.low  = get_right_left_diff(T, 'L', 2, timeIdx);
+sideData.L.high = get_right_left_diff(T, 'L', 6, timeIdx);
+sideData.R.low  = get_left_right_diff(T, 'R', 2, timeIdx);
+sideData.R.high = get_left_right_diff(T, 'R', 6, timeIdx);
 
 end
 
 %% ========================================================================
-function X = pick_load_array(T, prefix, side, loadVal, timeIdx)
+function sideData = construct_global_alpha_side_load_features(T, timeIdx, doMean)
+% Return global posterior alpha features separately for attended-left and
+% attended-right trials. If doMean=false, use all left+right posterior
+% channels. If doMean=true, average channels to one feature per trial/time.
+
+sideData = struct();
+sideData.L.low  = get_global_features(T, 'L', 2, timeIdx, doMean);
+sideData.L.high = get_global_features(T, 'L', 6, timeIdx, doMean);
+sideData.R.low  = get_global_features(T, 'R', 2, timeIdx, doMean);
+sideData.R.high = get_global_features(T, 'R', 6, timeIdx, doMean);
+
+end
+
+%% ========================================================================
+function X = get_right_left_diff(T, attendedSide, loadVal, timeIdx)
+
+[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
+X = rightX - leftX;
+
+end
+
+%% ========================================================================
+function X = get_left_right_diff(T, attendedSide, loadVal, timeIdx)
+
+[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
+X = leftX - rightX;
+
+end
+
+%% ========================================================================
+function X = get_global_features(T, attendedSide, loadVal, timeIdx, doMean)
+
+[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
+X = cat(2, leftX, rightX);
+
+if doMean
+    X = mean(X, 2, 'omitnan');
+end
+
+end
+
+%% ========================================================================
+function [leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx)
 
 loadStr = num2str(loadVal);
-X = first_existing_field(T, direct_candidates(prefix, side, loadStr));
+leftName  = sprintf('left_%s_%s', attendedSide, loadStr);
+rightName = sprintf('right_%s_%s', attendedSide, loadStr);
 
-if isempty(X)
-    if loadVal == 2
-        condNames = {'C2', 'S2'};
-    elseif loadVal == 6
-        condNames = {'C6', 'S6'};
-    else
-        error('Unsupported load value: %g.', loadVal);
-    end
-
-    parts = cell(1, numel(condNames));
-    for ci = 1:numel(condNames)
-        parts{ci} = first_existing_field(T, condition_candidates(prefix, side, condNames{ci}));
-    end
-
-    if all(cellfun(@(x) ~isempty(x), parts))
-        X = cat(1, parts{:});
-    end
+if isfield(T, leftName) && isfield(T, rightName)
+    leftX  = T.(leftName);
+    rightX = T.(rightName);
+else
+    [leftX, rightX] = get_abs_left_right_from_legacy_fields(T, attendedSide, loadVal);
 end
 
-if isempty(X)
+check_abs_pair(leftX, rightX, attendedSide, loadStr);
+leftX  = leftX(:,:,timeIdx);
+rightX = rightX(:,:,timeIdx);
+
+end
+
+%% ========================================================================
+function [leftX, rightX] = get_abs_left_right_from_legacy_fields(T, attendedSide, loadVal)
+% Backward-compatible fallback for older files that still contain
+% contra/ipsi side-specific fields.
+
+loadStr = num2str(loadVal);
+contraName = sprintf('contra_%s_%s', attendedSide, loadStr);
+ipsiName   = sprintf('ipsi_%s_%s',   attendedSide, loadStr);
+
+if ~(isfield(T, contraName) && isfield(T, ipsiName))
     fn = fieldnames(T);
     preview = strjoin(fn(1:min(numel(fn), 30)), ', ');
-    error(['Missing side-specific %s field for side %s, load %s.\n' ...
-           'Expected fields like %s_L_%s / %s_R_%s, or condition fields like %s_L_C%s and %s_L_S%s.\n' ...
+    error(['Missing minimal absolute fields left_%s_%s/right_%s_%s.\n' ...
+           'Also could not find legacy fields contra_%s_%s/ipsi_%s_%s.\n' ...
            'Current trial fields begin with: %s\n' ...
-           'This cannot be reconstructed from collapsed fields alone; rerun cda_alpha.m after adding side-specific fields.'], ...
-           prefix, side, loadStr, prefix, loadStr, prefix, loadStr, prefix, loadStr, prefix, loadStr, preview);
+           'Please rerun cda_alpha.m using the minimal-storage version.'], ...
+           attendedSide, loadStr, attendedSide, loadStr, ...
+           attendedSide, loadStr, attendedSide, loadStr, preview);
 end
 
-if ndims(X) ~= 3
-    error('Field for side %s, load %s must be trials x channels x time.', side, loadStr);
-end
-if size(X, 3) ~= numel(timeIdx)
-    error('The time dimension of the extracted field does not match the time vector.');
-end
+contra = T.(contraName);
+ipsi   = T.(ipsiName);
 
-X = X(:,:,timeIdx);
-
-end
-
-%% ========================================================================
-function names = direct_candidates(prefix, side, loadStr)
-
-sideLower = lower(side);
-if strcmpi(side, 'L')
-    sideLong = 'left';
-    sideLongCap = 'Left';
+if strcmpi(attendedSide, 'L')
+    % attended-left: contra = right, ipsi = left
+    leftX  = ipsi;
+    rightX = contra;
 else
-    sideLong = 'right';
-    sideLongCap = 'Right';
+    % attended-right: contra = left, ipsi = right
+    leftX  = contra;
+    rightX = ipsi;
 end
-
-names = {
-    sprintf('%s_%s_%s', prefix, side, loadStr)
-    sprintf('%s_%s%s', prefix, side, loadStr)
-    sprintf('%s%s_%s', prefix, side, loadStr)
-    sprintf('%s%s%s', prefix, side, loadStr)
-    sprintf('%s_%s_%s', prefix, sideLower, loadStr)
-    sprintf('%s_%s%s', prefix, sideLower, loadStr)
-    sprintf('%s_%s_%s', prefix, sideLong, loadStr)
-    sprintf('%s_%s%s', prefix, sideLong, loadStr)
-    sprintf('%s_%s_%s', prefix, sideLongCap, loadStr)
-    sprintf('%s_%s%s', prefix, sideLongCap, loadStr)
-    sprintf('%s_%s_%s', side, prefix, loadStr)
-    sprintf('%s_%s%s', side, prefix, loadStr)
-    sprintf('%s_%s_%s', sideLower, prefix, loadStr)
-    sprintf('%s_%s%s', sideLower, prefix, loadStr)
-    sprintf('%s_%s_%s', sideLong, prefix, loadStr)
-    sprintf('%s_%s%s', sideLong, prefix, loadStr)
-    sprintf('%s%d_%s', side, str2double(loadStr), prefix)
-    sprintf('%s%s_%s', side, loadStr, prefix)
-    };
 
 end
 
 %% ========================================================================
-function names = condition_candidates(prefix, side, condName)
+function check_abs_pair(leftX, rightX, attendedSide, loadStr)
 
-sideLower = lower(side);
-if strcmpi(side, 'L')
-    sideLong = 'left';
-    sideLongCap = 'Left';
-else
-    sideLong = 'right';
-    sideLongCap = 'Right';
+if ndims(leftX) ~= 3 || ndims(rightX) ~= 3
+    error('Fields for side %s, load %s must be trials x channels x time.', attendedSide, loadStr);
 end
-
-names = {
-    sprintf('%s_%s_%s', prefix, side, condName)
-    sprintf('%s_%s%s', prefix, side, condName)
-    sprintf('%s%s_%s', prefix, side, condName)
-    sprintf('%s%s%s', prefix, side, condName)
-    sprintf('%s_%s_%s', prefix, sideLower, condName)
-    sprintf('%s_%s%s', prefix, sideLower, condName)
-    sprintf('%s_%s_%s', prefix, sideLong, condName)
-    sprintf('%s_%s%s', prefix, sideLong, condName)
-    sprintf('%s_%s_%s', prefix, sideLongCap, condName)
-    sprintf('%s_%s%s', prefix, sideLongCap, condName)
-    sprintf('%s_%s_%s', side, prefix, condName)
-    sprintf('%s_%s%s', side, prefix, condName)
-    sprintf('%s_%s_%s', sideLower, prefix, condName)
-    sprintf('%s_%s%s', sideLower, prefix, condName)
-    sprintf('%s_%s_%s', sideLong, prefix, condName)
-    sprintf('%s_%s%s', sideLong, prefix, condName)
-    sprintf('%s_%s_%s', side, condName, prefix)
-    sprintf('%s_%s_%s', sideLower, condName, prefix)
-    sprintf('%s_%s_%s', sideLong, condName, prefix)
-    };
-
-end
-
-%% ========================================================================
-function X = first_existing_field(T, candidates)
-
-X = [];
-for i = 1:numel(candidates)
-    nm = candidates{i};
-    if isfield(T, nm)
-        X = T.(nm);
-        return;
-    end
+if ~isequal(size(leftX), size(rightX))
+    error('Left/right posterior fields do not match for side %s, load %s.', attendedSide, loadStr);
 end
 
 end
@@ -253,9 +232,28 @@ result.withinSide.description = 'Load decoding was run separately within attende
 result.withinSide.leftCountsLowHigh = leftCounts;
 result.withinSide.rightCountsLowHigh = rightCounts;
 result.withinSide.averageMode = 'unweighted mean of left-side and right-side decoding results';
+result.withinSide.featureConstruction = feature_description(modelName);
 result.side = struct();
 result.side.Left  = keep_plot_relevant_fields(resL);
 result.side.Right = keep_plot_relevant_fields(resR);
+
+end
+
+%% ========================================================================
+function txt = feature_description(modelName)
+
+switch lower(modelName)
+    case {'cda','alpha'}
+        txt = 'Constructed on demand as contra-minus-ipsi within attended side.';
+    case 'globalalpha'
+        txt = 'Constructed on demand as absolute posterior alpha [left channels, right channels].';
+    case 'globalalphamean'
+        txt = 'Constructed on demand as the trial-wise mean over absolute posterior alpha channels.';
+    case {'nopca','pca'}
+        txt = 'Constructed on demand by concatenating CDA contra-minus-ipsi and alpha contra-minus-ipsi features.';
+    otherwise
+        txt = '';
+end
 
 end
 
