@@ -1,89 +1,72 @@
-clear,clc
-maindir = erase(pwd,'code');
-datadir = [maindir 'cda_alpha\'];
-outputdir = [maindir 'decoding_SVM\'];
-% create folders
-for i = 1:4
-    switch i
-        case 1, tmp_name = 'CDA';
-        case 2, tmp_name = 'Alpha';
-        case 3, tmp_name = 'NoPCA';
-        case 4, tmp_name = 'PCA';
-    end
-    if ~isfolder( [outputdir tmp_name] )
-        mkdir( [outputdir tmp_name] )
-    end
+clear; clc
+
+projectRoot = erase(pwd, 'code');
+statRoot    = fullfile(projectRoot, 'data1');
+
+datadir = fullfile(statRoot, 'cda_alpha');
+if ~isfolder(datadir)
+    datadir = fullfile(projectRoot, 'cda_alpha');
 end
- 
+
+outputdir = fullfile(statRoot, 'decoding_SVM_spatialControl', 'loadWithinSide');
+
+modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA'};
+for i = 1:numel(modelNames)
+    outFolder = fullfile(outputdir, modelNames{i});
+    if ~isfolder(outFolder), mkdir(outFolder); end
+end
+
 %% config
 cfg = struct();
-cfg.cvType = 'holdout';        % 'holdout' reproduces 2/3 train, 1/3 test style
+cfg.cvType = 'holdout';
 cfg.trainRatio = 2/3;
-cfg.nFolds = 3;                % only used when cfg.cvType = 'kfold'
+cfg.nFolds = 3;
 cfg.superTrial = 10;
 cfg.nIter = 100;
 
 cfg.smooth_window = 50;
 cfg.smooth_step = 50;
-cfg.timeWindowMode = 'bin';    % article-style 50-ms bins
+cfg.timeWindowMode = 'bin';
 
-cfg.doTimeGeneralization = 1;
+cfg.analysisWindow = [-200 inf];
+cfg.doTimeGeneralization = true;
 cfg.doPCA = false;
 cfg.nPCs = 5;
-cfg.discrimType = 'Linear';
-cfg.standardize = 1;
 
-cfg.doShuffle = true;          % shuffled TRAINING labels empirical chance
-cfg.balanceTrials = true;      % balance classes each iteration
+cfg.kernelFunction = 'linear';
+cfg.kernelScale = 'auto';
+cfg.boxConstraint = 1;
+cfg.standardize = true;
+
+cfg.doShuffle = true;
+cfg.balanceTrials = true;
 cfg.balanceNPerCell = [];
 cfg.balanceFactors = [];
-cfg.useAUC = 1;
+cfg.useAUC = true;
 cfg.useParallel = true;
-cfg.verbose = 0;
+cfg.verbose = false;
 cfg.randomSeed = [];
-CDA = struct();
-%%
-files = dir([datadir 'sub*']);
-for s = numel(files)-1:-1:1
-    result = struct();
+
+%% single-subject within-side load decoding
+files = dir(fullfile(datadir, 'sub*.mat'));
+
+for s = numel(files):-1:1
     file = files(s).name;
-    fprintf("Now Processing: %s\n", file)
-    load([datadir file]) % this file contains two structs: cda & alpha
+    fprintf('Now Processing: %s\n', file)
 
-    if min(cda.trials_per_cond) < 160
-        continue
+    load(fullfile(datadir, file), 'cda', 'alpha')
+
+    Results = run_load_within_side_models(cda, alpha, cfg, @SVM_function_singleSubj);
+
+    for mi = 1:numel(modelNames)
+        modelName = modelNames{mi};
+        outFile = fullfile(outputdir, modelName, file);
+
+        tmp = Results.(modelName);
+        eval([modelName ' = tmp;']);
+        save(outFile, modelName, '-v7.3')
+        clear(modelName)
     end
-
-    % perpare labels and data for SVM
-    labels = [ones(size(cda.trial.diff_2,1),1)*2; ones(size(cda.trial.diff_6,1),1)*6];
-
-    data1  = cat( 1, cda.trial.diff_2, cda.trial.diff_6 ); % trials x channels x time
-    data1  = permute(data1, [2,3,1]);
-    % decode load based on CDA
-    CDA = SVM_function_singleSubj(data1,labels, cda.time,cfg);
-    % CDA.ACC = subj_CDA.predictAcc;
-
-    save([outputdir 'CDA\' file], "CDA")
-    
-    % % decode load based on alpha band
-    data2 = cat( 1, alpha.trial.diff_2, alpha.trial.diff_6 ); % trials x channels x time
-    data2  = permute(data2, [2,3,1]);
-    Alpha = SVM_function_singleSubj(data2,labels, cda.time,cfg);
-
-    save([outputdir 'Alpha\' file], "Alpha")
-    % 
-    %  % decode load based on CDA & alpha
-    data3 = cat(1, data1, data2);
-    NoPCA = SVM_function_singleSubj(data3,labels, cda.time,cfg);
-
-
-     save([outputdir 'NoPCA\' file], "NoPCA")
-    % 
-    % % PCA before decoding 
-    cfg.doPCA = 1;
-    PCA = SVM_function_singleSubj(data3,labels, cda.time,cfg);
-
-    save([outputdir 'PCA\' file], "PCA")
-
-    % fprintf('Subject %s finished\n\n', subjName);
 end
+
+fprintf('SVM within-side load decoding finished. Results saved to:\n%s\n', outputdir)
