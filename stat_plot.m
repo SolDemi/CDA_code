@@ -1,32 +1,51 @@
 %% ===================== basic config =====================
 
 clear; clc;
-spatialControl = 1;
 cfg = struct();
 
+sideFeatures = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
+loadFeatures = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
+analysisNames = {'loadDecoding', 'sideDecoding', 'loadWithinSide', 'loadSideBalanced', 'loadCrossSide'};
+
 decodefolder = 'LDA';   % 'SVM' or 'LDA'
-maindir = [ erase(pwd, 'code'), 'data0' ];
-if spatialControl == 1
-    decodingDir = fullfile(maindir, ['decoding_' decodefolder '_spatialControl'],'sideDecoding');
-    cfg.modelNames = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
+maindir = [ erase(pwd, 'code'), 'data1' ];
 
-    cfg.pairList = {
-        'VoltageRawLR',   'AlphaRawLR'
-        'VoltageLminusR', 'AlphaLminusR'
-        };
+analysis = 3;
 
-else
-    decodingDir = fullfile(maindir, ['decoding_' decodefolder]);
-    cfg.modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA', 'GlobalAlpha'};
+switch analysis
+    case 1
+        decodingDir = fullfile(maindir, ['decoding_' decodefolder]);
+        cfg.modelNames = {'CDA', 'Alpha', 'NoPCA', 'PCA', 'GlobalAlpha'};
 
-    cfg.pairList = {
-        'CDA',   'Alpha'
-        'NoPCA', 'CDA'
-        'NoPCA', 'Alpha'
-        'PCA',   'NoPCA'
-        'GlobalAlpha', 'CDA'
-        'GlobalAlpha', 'PCA'
-        };
+        cfg.pairList = {
+            'CDA',   'Alpha'
+            'NoPCA', 'CDA'
+            'NoPCA', 'Alpha'
+            'PCA',   'NoPCA'
+            'GlobalAlpha', 'CDA'
+            'GlobalAlpha', 'PCA'
+            };
+    case 2
+        decodingDir = fullfile(maindir, ['decoding_' decodefolder '_spatialControl'],analysisNames{analysis});
+        cfg.modelNames = sideFeatures;
+
+        cfg.pairList = {
+            'VoltageRawLR',   'AlphaRawLR'
+            'VoltageLminusR', 'AlphaLminusR'
+            };
+
+    otherwise
+        decodingDir = fullfile(maindir, ['decoding_' decodefolder '_spatialControl'],analysisNames{analysis});
+        cfg.modelNames = loadFeatures;
+        cfg.pairList = {
+            'CDA',   'Alpha'
+            'NoPCA', 'CDA'
+            'NoPCA', 'Alpha'
+            'PCA',   'NoPCA'
+            'GlobalAlpha', 'CDA'
+            'GlobalAlpha', 'PCA'
+            };
+        
 end
 saveDir = fullfile(decodingDir, 'GroupStats');
 
