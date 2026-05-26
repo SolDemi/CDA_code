@@ -9,13 +9,19 @@
 % functions are on the MATLAB path:
 % LDA_function_singleSubj.m
 % LDA_crossSide_singleSubj.m
-% calculate_high_gamma_power.m
+% calculate_hilbert_band_power.m
 % balance_trials_by_label.m
 % func_make_superTrials.m
 
 clear; clc;
 
-maindir   = [erase(pwd, 'code'), 'data0'];
+codeDir = fileparts(mfilename('fullpath'));
+mainCodeDir = fileparts(codeDir);
+projectRoot = fileparts(mainCodeDir);
+addpath(mainCodeDir);
+addpath(codeDir);
+
+maindir   = fullfile(projectRoot, 'data0');
 datadir   = fullfile(maindir, 'data');
 outputdir = fullfile(maindir, 'decoding_LDA_spatialControl');
 
@@ -112,90 +118,90 @@ for s = 1:numel(files)
     % 1) Side decoding positive control
     %    Use fixed anatomical features only. Do NOT use contra-minus-ipsi.
     % ============================================================
-    % for fi = 1:numel(sideFeatures)
-    %     featName = sideFeatures{fi};
-    %     [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName);
-    % 
-    %     cfgSide = cfg;
-    %     cfgSide.doPCA = false;
-    %     cfgSide.balanceFactors = loadFactor(:);  % side decoding is load-balanced
-    % 
-    %     Result = run_LDA_if_enough(dataSide, labelsSide, time, cfgSide);
-    %     if isempty(Result), continue; end
-    % 
-    %     Result.analysis = 'sideDecoding';
-    %     Result.feature = featName;
-    %     Result.labelMeaning = {'attendLeft', 'attendRight'};
-    %     Result.loadFactor = loadFactor;
-    %     Result.baselinewindow = baselinewindow;
-    %     Result.frep = frep;
-    %     Result.channelLabels = channels_for_feature(featName, L_labels, R_labels, global_labels);
-    %     save_result(outputdir, 'sideDecoding', featName, file, Result);
-    % end
+    for fi = 1:numel(sideFeatures)
+        featName = sideFeatures{fi};
+        [dataSide, labelsSide, loadFactor] = make_side_decoding_data(sideDat, featName);
+
+        cfgSide = cfg;
+        cfgSide.doPCA = false;
+        cfgSide.balanceFactors = loadFactor(:);
+
+        Result = run_LDA_if_enough(dataSide, labelsSide, time, cfgSide);
+        if isempty(Result), continue; end
+
+        Result.analysis = 'sideDecoding';
+        Result.feature = featName;
+        Result.labelMeaning = {'attendLeft', 'attendRight'};
+        Result.loadFactor = loadFactor;
+        Result.baselinewindow = baselinewindow;
+        Result.frep = frep;
+        Result.channelLabels = channels_for_feature(featName, L_labels, R_labels, global_labels);
+        save_result(outputdir, 'sideDecoding', featName, file, Result);
+    end
 
     %% ============================================================
     % 2) Within-side load decoding
     %    Decode low vs high separately within each side, then average.
     % ============================================================
-    % for fi = 1:numel(loadFeatures)
-    %     featName = loadFeatures{fi};
-    % 
-    %     cfgLoad = cfg;
-    %     cfgLoad.balanceFactors = [];
-    %     cfgLoad.doPCA = strcmpi(featName, 'PCA');
-    % 
-    %     ResultSide = cell(1, 2);
-    %     for sidei = 1:2
-    %         [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
-    %         ResultSide{sidei} = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgLoad);
-    %         if ~isempty(ResultSide{sidei})
-    %             ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
-    %             ResultSide{sidei}.feature = featName;
-    %             ResultSide{sidei}.sideName = sideDat(sidei).name;
-    %         end
-    %     end
-    % 
-    %     Result = average_two_results(ResultSide{1}, ResultSide{2});
-    %     if isempty(Result), continue; end
-    % 
-    %     Result.analysis = 'loadWithinSide';
-    %     Result.feature = featName;
-    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
-    %     Result.sideResults = ResultSide;
-    %     Result.baselinewindow = baselinewindow;
-    %     Result.frep = frep;
-    %     save_result(outputdir, 'loadWithinSide', featName, file, Result);
-    % end
+    for fi = 1:numel(loadFeatures)
+        featName = loadFeatures{fi};
+
+        cfgLoad = cfg;
+        cfgLoad.balanceFactors = [];
+        cfgLoad.doPCA = strcmpi(featName, 'PCA');
+
+        ResultSide = cell(1, 2);
+        for sidei = 1:2
+            [dataLoad, labelsLoad] = make_load_data_one_side(sideDat(sidei), featName);
+            ResultSide{sidei} = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgLoad);
+            if ~isempty(ResultSide{sidei})
+                ResultSide{sidei}.analysis = 'loadWithinSide_singleSide';
+                ResultSide{sidei}.feature = featName;
+                ResultSide{sidei}.sideName = sideDat(sidei).name;
+            end
+        end
+
+        Result = average_two_results(ResultSide{1}, ResultSide{2});
+        if isempty(Result), continue; end
+
+        Result.analysis = 'loadWithinSide';
+        Result.feature = featName;
+        Result.labelMeaning = {'lowLoad', 'highLoad'};
+        Result.sideResults = ResultSide;
+        Result.baselinewindow = baselinewindow;
+        Result.frep = frep;
+        save_result(outputdir, 'loadWithinSide', featName, file, Result);
+    end
 
     %% ============================================================
     % 3) Side-balanced load decoding
     %    Merge two sides, but balance each load x side cell in each iteration.
     % ============================================================
-    % for fi = 1:numel(loadFeatures)
-    %     featName = loadFeatures{fi};
-    %     [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
-    % 
-    %     cfgBal = cfg;
-    %     cfgBal.balanceFactors = sideFactor(:);
-    %     cfgBal.doPCA = strcmpi(featName, 'PCA');
-    % 
-    %     Result = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgBal);
-    %     if isempty(Result), continue; end
-    % 
-    %     Result.analysis = 'loadSideBalanced';
-    %     Result.feature = featName;
-    %     Result.labelMeaning = {'lowLoad', 'highLoad'};
-    %     Result.sideFactor = sideFactor;
-    %     Result.sideMeaning = {'attendLeft', 'attendRight'};
-    %     Result.baselinewindow = baselinewindow;
-    %     Result.frep = frep;
-    %     save_result(outputdir, 'loadSideBalanced', featName, file, Result);
-    % end
-    % 
-    % %% ============================================================
-    % % 4) Cross-side load generalization
-    % %    Train low vs high on one side, test on the other side, average directions.
-    % % ============================================================
+    for fi = 1:numel(loadFeatures)
+        featName = loadFeatures{fi};
+        [dataLoad, labelsLoad, sideFactor] = make_side_balanced_load_data(sideDat, featName);
+
+        cfgBal = cfg;
+        cfgBal.balanceFactors = sideFactor(:);
+        cfgBal.doPCA = strcmpi(featName, 'PCA');
+
+        Result = run_LDA_if_enough(dataLoad, labelsLoad, time, cfgBal);
+        if isempty(Result), continue; end
+
+        Result.analysis = 'loadSideBalanced';
+        Result.feature = featName;
+        Result.labelMeaning = {'lowLoad', 'highLoad'};
+        Result.sideFactor = sideFactor;
+        Result.sideMeaning = {'attendLeft', 'attendRight'};
+        Result.baselinewindow = baselinewindow;
+        Result.frep = frep;
+        save_result(outputdir, 'loadSideBalanced', featName, file, Result);
+    end
+
+    %% ============================================================
+    % 4) Cross-side load generalization
+    %    Train low vs high on one side, test on the other side, average directions.
+    % ============================================================
     for fi = 1:numel(loadFeatures)
         featName = loadFeatures{fi};
 
@@ -245,21 +251,21 @@ function sideOne = build_side_features(sideOne, eeg0, artifactInd, chanLabels, s
         eeg0, artifactInd, chanLabels, sideCfg.condHigh, sideCfg.channel_contra, ...
         sideCfg.channel_ipsi, L_labels, R_labels, global_labels);
 
-    alphaContraLow  = calculate_high_gamma_power(contraLow,  srate, time, baselinewindow, frep);
-    alphaIpsiLow    = calculate_high_gamma_power(ipsiLow,    srate, time, baselinewindow, frep);
-    alphaRawLow     = calculate_high_gamma_power(rawLow,     srate, time, baselinewindow, frep);
-    alphaLeftLow    = calculate_high_gamma_power(leftLow,    srate, time, baselinewindow, frep);
-    alphaRightLow   = calculate_high_gamma_power(rightLow,   srate, time, baselinewindow, frep);
+    alphaContraLow  = calculate_hilbert_band_power(contraLow,  srate, time, baselinewindow, frep);
+    alphaIpsiLow    = calculate_hilbert_band_power(ipsiLow,    srate, time, baselinewindow, frep);
+    alphaRawLow     = calculate_hilbert_band_power(rawLow,     srate, time, baselinewindow, frep);
+    alphaLeftLow    = calculate_hilbert_band_power(leftLow,    srate, time, baselinewindow, frep);
+    alphaRightLow   = calculate_hilbert_band_power(rightLow,   srate, time, baselinewindow, frep);
 
-    alphaRawMid     = calculate_high_gamma_power(rawMid,     srate, time, baselinewindow, frep);
-    alphaLeftMid    = calculate_high_gamma_power(leftMid,    srate, time, baselinewindow, frep);
-    alphaRightMid   = calculate_high_gamma_power(rightMid,   srate, time, baselinewindow, frep);
+    alphaRawMid     = calculate_hilbert_band_power(rawMid,     srate, time, baselinewindow, frep);
+    alphaLeftMid    = calculate_hilbert_band_power(leftMid,    srate, time, baselinewindow, frep);
+    alphaRightMid   = calculate_hilbert_band_power(rightMid,   srate, time, baselinewindow, frep);
 
-    alphaContraHigh = calculate_high_gamma_power(contraHigh, srate, time, baselinewindow, frep);
-    alphaIpsiHigh   = calculate_high_gamma_power(ipsiHigh,   srate, time, baselinewindow, frep);
-    alphaRawHigh    = calculate_high_gamma_power(rawHigh,    srate, time, baselinewindow, frep);
-    alphaLeftHigh   = calculate_high_gamma_power(leftHigh,   srate, time, baselinewindow, frep);
-    alphaRightHigh  = calculate_high_gamma_power(rightHigh,  srate, time, baselinewindow, frep);
+    alphaContraHigh = calculate_hilbert_band_power(contraHigh, srate, time, baselinewindow, frep);
+    alphaIpsiHigh   = calculate_hilbert_band_power(ipsiHigh,   srate, time, baselinewindow, frep);
+    alphaRawHigh    = calculate_hilbert_band_power(rawHigh,    srate, time, baselinewindow, frep);
+    alphaLeftHigh   = calculate_hilbert_band_power(leftHigh,   srate, time, baselinewindow, frep);
+    alphaRightHigh  = calculate_hilbert_band_power(rightHigh,  srate, time, baselinewindow, frep);
 
     % Load-decoding features: side-normalized unless noted.
     sideOne.CDA.low  = contraLow  - ipsiLow;
@@ -402,7 +408,7 @@ function Result = run_cross_if_enough(trainData, trainLabels, testData, testLabe
     if numel(unique(trainLabels)) ~= 2 || numel(unique(testLabels)) ~= 2, return; end
     if min(histcounts(trainLabels, [0.5 1.5 2.5])) < cfg.superTrial, return; end
     if min(histcounts(testLabels,  [0.5 1.5 2.5])) < cfg.superTrial, return; end
-    Result = SVM_crossSide_singleSubj(trainData, trainLabels, testData, testLabels, time, cfg);
+    Result = LDA_crossSide_singleSubj(trainData, trainLabels, testData, testLabels, time, cfg);
 end
 
 function Result = average_two_results(R1, R2)

@@ -3,14 +3,18 @@
 clear; clc;
 cfg = struct();
 
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
+
 sideFeatures = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
 loadFeatures = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
 analysisNames = {'loadDecoding', 'sideDecoding', 'loadWithinSide', 'loadSideBalanced', 'loadCrossSide'};
 
 decodefolder = 'LDA';   % 'SVM' or 'LDA'
-maindir = [ erase(pwd, 'code'), 'data1' ];
+maindir = fullfile(projectRoot, 'data1');
 
-analysis = 3;
+analysis = 3;           % 1=loadDecoding, 2=sideDecoding, 3=loadWithinSide
 
 switch analysis
     case 1
@@ -58,7 +62,8 @@ cfg.filePattern = '*.mat';
 cfg.chance = 0.5;
 cfg.delayWindow = [250 inf];         % maintenance summary: 250 ms to the end
 
-if strcmpi(maindir(end-4:end),'data0') 
+[~, dataName] = fileparts(maindir);
+if strcmpi(dataName, 'data0') 
     cfg.eventLines = [0 250];
 else
     cfg.eventLines = [0 150];
@@ -184,9 +189,9 @@ if cfg.doAgainstShuffleTime
         'statAgainstShuffle', 'cfg', 'times');
 end
 
-%% ===================== 2) maintenance-period summary: AUC - shuffle =====================
+%% ===================== 2) maintenance-period summary: metric - shuffle =====================
 cfg.multCompMethod = 'holm';       % 'holm', 'fdr', 'bonferroni', or 'none'
-cfg.showNonSigPairBars = false;    % false = 只画校正后显著的pairwise bar
+cfg.showNonSigPairBars = false;    % false = only draw corrected significant pairwise bars
 
 if cfg.doDelaySummary
 

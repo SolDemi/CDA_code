@@ -1,88 +1,103 @@
-clear, clc;
-decodefolder = 'SVM';
+%% Plot group-level SVM decoding results
 
-maindir = erase(pwd,'code');
-decodingDir = fullfile(maindir, 'data0', ['decoding_' decodefolder] );
+clear; clc;
 
-modelNames = {'CDA','Alpha', 'GlobalAlpha','NoPCA','PCA'};
-colors = [0.00 0.45 0.74; 0.85 0.33 0.10; 0.47 0.67 0.19; 0.49 0.18 0.56];
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
+
+decodingDir = fullfile(projectRoot, 'data1', 'decoding_SVM_spatialControl', 'loadWithinSide');
+saveDir = fullfile(decodingDir, 'GroupStats');
+if ~isfolder(saveDir)
+    mkdir(saveDir);
+end
+
+modelNames = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
+colors = lines(numel(modelNames));
+
+loadCfg = struct();
+loadCfg.metric = 'AUC';
+loadCfg.useDiagonal = true;
+loadCfg.filePattern = '*.mat';
+
 stats = struct();
-
-
-% time = -200:4:996;
-% idx  = dsearchn( [-200:4:996]', time'); %
-
+validModels = {};
 
 for m = 1:numel(modelNames)
     modelName = modelNames{m};
-    files = dir(fullfile(decodingDir, modelName,'*.mat'));%
-    disp(['Now Processing: ' modelName])
-    diagAUC = [];
-    AUC = [];
-    for s = 1:numel(files)
-        S = load(fullfile(files(s).folder, files(s).name));
-        R = S.(modelName);
-        diagAUC(s,:) = diag(R.AUC); %#ok<SAGROW>
-        AUC(s,:,:) = R.AUC; %#ok<SAGROW>
+    resultDir = fullfile(decodingDir, modelName);
+    if ~isfolder(resultDir) || isempty(dir(fullfile(resultDir, '*.mat')))
+        fprintf('Skip %s: no files found.\n', modelName);
+        continue;
     end
-    time = R.times';
-    % diagAUC = diagAUC(:,idx);
-    stats.(modelName).AUC = AUC;
+
+    loadCfg.resultVarName = modelName;
+    [diagAUC, time, usedFiles] = extract_decoding_timeseries(resultDir, loadCfg);
+
     stats.(modelName).diagAUC = diagAUC;
-    stats.(modelName).mean = mean(diagAUC, 1);
-    stats.(modelName).sem  = std(diagAUC, 0, 1) ./ sqrt(size(diagAUC,1));
-    stats.(modelName).n    = size(diagAUC,1);
+    stats.(modelName).mean = mean(diagAUC, 1, 'omitnan');
+    stats.(modelName).sem = std(diagAUC, 0, 1, 'omitnan') ./ sqrt(sum(~isnan(diagAUC), 1));
+    stats.(modelName).n = size(diagAUC, 1);
+    stats.(modelName).files = usedFiles;
+    stats.(modelName).color = colors(m,:);
 
-    timeidx = dsearchn(time',[400 950]');
-    meanAUC = mean( stats.(modelName).diagAUC(:,timeidx(1):timeidx(2) ) );
-    mean(meanAUC)
-    cohen_d = ( mean(meanAUC) - 0.5 ) / std(meanAUC)
-
+    validModels{end+1} = modelName; %#ok<SAGROW>
+    fprintf('Loaded %s: nSub = %d, nTime = %d\n', modelName, size(diagAUC,1), size(diagAUC,2));
 end
 
+if isempty(validModels)
+    error('No SVM result files found in %s.', decodingDir);
+end
 
-% half_window = 50 / 2;
-% validTimeMask = (time - half_window >= time(1)) & (time + half_window <= time(end));
-% time = time(validTimeMask);
+%% Time-course plot
+fig = figure('Color', 'w', 'Position', [100 100 1100 620]); hold on;
 
-%% plotting 4 models
-    xlim_plot = [-200 1000];
-    ylim_plot = [0.4 0.9];
-    xlabel_p  = 'Times';
-    ylabel_p  = 'AUC';
-
-
-plot_shaded_errorbar_fourCurve( time,stats.CDA.diagAUC,stats.Alpha.diagAUC,stats.NoPCA.diagAUC,stats.PCA.diagAUC,...
-    xlim_plot,ylim_plot,xlabel_p,ylabel_p,modelNames,colors)
-xline(0,'--r','Memory array onset')
-yline(0.5,'--r')
-xline(150,'--r','Memory array offset')
-
-
-
-[h, p, ci, ~] = ttest(meanAUC, 0.5, 'Tail', 'right');
-cohen_d = ( mean(meanAUC) - 0.5 ) / std(meanAUC)
-
-%% plotting 1 model
-fig = figure('Color','w','Position',[100 100 1100 600]); hold on;
-tmp_modelNames = {'CDA'};
-for m = 1:numel(tmp_modelNames)
-    modelName = tmp_modelNames{m};
+for m = 1:numel(validModels)
+    modelName = validModels{m};
     y = stats.(modelName).mean;
     e = stats.(modelName).sem;
-    c = colors(m,:);
+    c = stats.(modelName).color;
 
     patch([time, fliplr(time)], [y+e, fliplr(y-e)], c, ...
-        'FaceAlpha', 0.18, 'EdgeColor', 'none','HandleVisibility','off');
-
-    plot(time, y, 'LineWidth', 2.2, 'Color', c, ...
+        'FaceAlpha', 0.16, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    plot(time, y, 'LineWidth', 2, 'Color', c, ...
         'DisplayName', sprintf('%s (n=%d)', modelName, stats.(modelName).n));
 end
 
-xline(0, '--k','HandleVisibility','off');
-yline(0.5, ':k','HandleVisibility','off');
+xline(0, '--k', 'Memory array onset', 'HandleVisibility', 'off');
+xline(150, '--k', 'Memory array offset', 'HandleVisibility', 'off');
+yline(0.5, ':k', 'HandleVisibility', 'off');
+xlim([-200 1000]);
+ylim([0.4 0.9]);
 xlabel('Time (ms)');
-ylabel('AUC (diag)');
-title('Group-level AUC: CDA / Alpha / NoPCA / PCA');
-legend('Location','best');
-grid on; box off;
+ylabel('AUC');
+title('Group-level SVM decoding');
+legend('Location', 'best');
+box off; grid on;
+
+savefig(fig, fullfile(saveDir, 'SVM_AUC_timeseries.fig'));
+print(fig, fullfile(saveDir, 'SVM_AUC_timeseries.png'), '-dpng', '-r300');
+
+%% Maintenance-window summary
+summaryWin = [400 950];
+timeIdx = time >= summaryWin(1) & time <= summaryWin(2);
+rows = cell(numel(validModels), 6);
+
+for m = 1:numel(validModels)
+    modelName = validModels{m};
+    subjMean = mean(stats.(modelName).diagAUC(:, timeIdx), 2, 'omitnan');
+    subjMean = subjMean(~isnan(subjMean));
+    [~, p, ~, st] = ttest(subjMean, 0.5, 'Tail', 'right');
+    dz = (mean(subjMean, 'omitnan') - 0.5) ./ std(subjMean, 0, 'omitnan');
+
+    rows(m,:) = {modelName, numel(subjMean), mean(subjMean, 'omitnan'), ...
+        std(subjMean, 0, 'omitnan') ./ sqrt(numel(subjMean)), p, dz};
+
+    fprintf('%s %d-%d ms: mean AUC = %.4f, t(%d) = %.3f, p = %.4g, dz = %.3f\n', ...
+        modelName, summaryWin(1), summaryWin(2), rows{m,3}, st.df, st.tstat, p, dz);
+end
+
+Summary = cell2table(rows, 'VariableNames', ...
+    {'Model', 'N', 'MeanAUC', 'SEM', 'P_right_vs_0p5', 'CohenDz'});
+writetable(Summary, fullfile(saveDir, 'SVM_AUC_maintenance_summary.csv'));
+save(fullfile(saveDir, 'SVM_AUC_group_stats.mat'), 'stats', 'Summary', 'time', 'loadCfg');

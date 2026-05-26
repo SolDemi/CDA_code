@@ -1,6 +1,10 @@
 clear; clc;
 
-maindir   = [erase(pwd, 'code') , 'data0'];
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
+
+maindir   = fullfile(projectRoot, 'data0');
 datadir   = fullfile(maindir, 'data');
 outputdir = fullfile(maindir, 'decoding_LDA');
 
@@ -46,24 +50,11 @@ L_labels = {'O1','OL','P3','PO3','T5'};
 R_labels = {'O2','OR','P4','PO4','T6'};
 global_labels = [L_labels, R_labels];
 
-% ------------------------------------------------------------
-% 原始对应关系：
-%
-% side 1:
-%   R - L, condition 1 vs 3
-%
-% side 2:
-%   L - R, condition 4 vs 6
-%
-% CDA:
-%   contra ERP - ipsi ERP
-%
-% Lateralized alpha:
-%   alpha(contra raw EEG) - alpha(ipsi raw EEG)
-%
-% Global alpha:
-%   alpha(left + right posterior channels), no subtraction
-% ------------------------------------------------------------
+% Original condition mapping:
+% side 1 uses R-L for condition 1 vs 3.
+% side 2 uses L-R for condition 4 vs 6.
+% CDA and lateralized alpha are contra-minus-ipsi features.
+% Global alpha uses all posterior left/right channels without subtraction.
 sideCfg(1).channel_care  = R_labels;
 sideCfg(1).channel_minus = L_labels;
 sideCfg(1).cond1 = 1;
@@ -81,7 +72,7 @@ frep = [8, 12];
 %% decoding
 files = dir(fullfile(datadir, '*.mat'));
 
-for s = 13:numel(files)
+for s = 1:numel(files)
 
     file = files(s).name;
     fprintf('Now Processing: %s\n', file);
@@ -123,16 +114,16 @@ for s = 13:numel(files)
         a_cda = a_care - a_minus;
 
         % lateralized alpha: alpha(contra) - alpha(ipsi)
-        a_alpha_care = calculate_high_gamma_power( ...
+        a_alpha_care = calculate_hilbert_band_power( ...
             a_care, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
-        a_alpha_minus = calculate_high_gamma_power( ...
+        a_alpha_minus = calculate_hilbert_band_power( ...
             a_minus, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
         a_alpha = a_alpha_care - a_alpha_minus;
 
         % global alpha: alpha(left + right posterior channels)
-        a_global_alpha = calculate_high_gamma_power( ...
+        a_global_alpha = calculate_hilbert_band_power( ...
             a_global, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
         %% condition 2
@@ -143,16 +134,16 @@ for s = 13:numel(files)
         b_cda = b_care - b_minus;
 
         % lateralized alpha: alpha(contra) - alpha(ipsi)
-        b_alpha_care = calculate_high_gamma_power( ...
+        b_alpha_care = calculate_hilbert_band_power( ...
             b_care, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
-        b_alpha_minus = calculate_high_gamma_power( ...
+        b_alpha_minus = calculate_hilbert_band_power( ...
             b_minus, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
         b_alpha = b_alpha_care - b_alpha_minus;
 
         % global alpha: alpha(left + right posterior channels)
-        b_global_alpha = calculate_high_gamma_power( ...
+        b_global_alpha = calculate_hilbert_band_power( ...
             b_global, tmp.eeg.settings.srate, time, baselinewindow, frep);
 
         %% merge left/right trials
@@ -201,7 +192,7 @@ for s = 13:numel(files)
     CDA.nCond1 = size(CDA_cond1_all,3);
     CDA.nCond2 = size(CDA_cond2_all,3);
     CDA.labels = labels;
-    CDA.channelLabels = channel_care;
+    CDA.channelLabels = {'contraMinusIpsi posterior pairs'};
 
     save(fullfile(outputdir, 'CDA', file), 'CDA', '-v7.3');
 
@@ -216,7 +207,7 @@ for s = 13:numel(files)
     Alpha.labels = labels;
     Alpha.baselinewindow = baselinewindow;
     Alpha.frep = frep;
-    Alpha.channelLabels = channel_care;
+    Alpha.channelLabels = {'contraMinusIpsi posterior pairs'};
 
     save(fullfile(outputdir, 'Alpha', file), 'Alpha', '-v7.3');
 
@@ -248,6 +239,7 @@ for s = 13:numel(files)
     NoPCA.labels = labels;
     NoPCA.baselinewindow = baselinewindow;
     NoPCA.frep = frep;
+    NoPCA.channelLabels = {'CDA posterior pairs', 'lateralized alpha posterior pairs'};
 
     save(fullfile(outputdir, 'NoPCA', file), 'NoPCA', '-v7.3');
 
@@ -262,6 +254,7 @@ for s = 13:numel(files)
     PCA.labels = labels;
     PCA.baselinewindow = baselinewindow;
     PCA.frep = frep;
+    PCA.channelLabels = {'CDA posterior pairs', 'lateralized alpha posterior pairs'};
 
     save(fullfile(outputdir, 'PCA', file), 'PCA', '-v7.3');
 
@@ -295,10 +288,10 @@ function [Xcare, Xminus, Xglobal] = get_clean_lateral_trials( ...
     globalDat = reshape(global_raw(condIdx,:,:,:), ...
         [nTrial, size(global_raw,3), size(global_raw,4)]);
 
-    % 先去掉 artifactInd 标记的 trial
+    % Remove artifact-marked trials first.
     keepTrial = ~artifactInd(condIdx,:);
 
-    % 再去掉任何包含 NaN / Inf 的 trial
+    % Then remove trials containing NaN or Inf in any feature set.
     badCare = squeeze(any(any(~isfinite(care), 2), 3))';
     badMinus = squeeze(any(any(~isfinite(minus), 2), 3))';
     badGlobal = squeeze(any(any(~isfinite(globalDat), 2), 3))';

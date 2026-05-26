@@ -1,70 +1,93 @@
-%% Compare CDA: 比较自己生成的CDA数据和数据集提供的数据集是否有差异
+%% Compare rebuilt CDA with the author-provided CDA
 
+clear; clc;
 
-clear,clc
-maindir = erase(pwd,'code');
-datadir1 = [maindir 'cda_alpha\'];
-datadir2 = [maindir 'data_raw\'];
-outputdir = [maindir 'decoding\'];
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
 
-rawfiles = dir(datadir2);
-
-output_dir = [maindir '\erp\'];
-if ~isfolder(output_dir)
-    mkdir(output_dir)
+dataRoot = fullfile(projectRoot, 'data1');
+manualDir = fullfile(dataRoot, 'cda_alpha');
+rawDir = fullfile(dataRoot, 'data_raw');
+outputDir = fullfile(dataRoot, 'erp');
+if ~isfolder(outputDir)
+    mkdir(outputDir);
 end
 
-bad_subs = cellfun(@(x) any(isletter(x)), {rawfiles.name});
-bad_subs(1:2) = 1;
-good_subs = rawfiles(~bad_subs);
-[cda1total2,cda2total2,cda1total6,cda2total6] = deal([]);
-for i = numel(good_subs):-1:1
-    subj = good_subs(i).name;
+rawFiles = dir(rawDir);
+isSubject = [rawFiles.isdir] & ~ismember({rawFiles.name}, {'.', '..'});
+subjects = rawFiles(isSubject);
 
-    disp(['Now Processing: Subj' subj])
+cdaManual2 = [];
+cdaManual6 = [];
+cdaSource2 = [];
+cdaSource6 = [];
+plotTime = [];
 
-    datafile2 = fullfile(datadir2, good_subs(i).name, 'erp_singletrial.mat');
-    load(datafile2)
-    cda2 = cda;
-    cda2plot2 = mean(cda2.diff_2); cda2plot6 = mean( cda2.diff_6 );
+for s = 1:numel(subjects)
+    subj = subjects(s).name;
+    fprintf('Now Processing: Subj%s\n', subj);
 
-
-
-    load([datadir1 sprintf('sub%s',subj)])
-    cda1plot2 = reshape(mean( mean( cda.trial.diff_2(:,:,201:end), 1 ), 2 ),1,[] );
-    cda1plot6 = reshape(mean( mean( cda.trial.diff_6(:,:,201:end), 1 ), 2 ),1,[] );
-    
-    if ~isempty(cda2total2)
-        cda2total2 = cat(1,cda2plot2,cda2total2); % subjects
-        cda2total6 = cat(1,cda2plot6,cda2total6);
-        cda1total2 = cat(1,cda1plot2,cda1total2);
-        cda1total6 = cat(1,cda1plot6,cda1total6);
-    else
-        cda2total2 = cda2plot2;
-        cda2total6 = cda2plot6;
-        cda1total2 = cda1plot2;
-        cda1total6 = cda1plot6;
+    sourceFile = fullfile(rawDir, subj, 'erp_singletrial.mat');
+    manualFile = fullfile(manualDir, sprintf('sub%s.mat', subj));
+    if ~isfile(sourceFile) || ~isfile(manualFile)
+        fprintf('Skip subject %s: missing source or rebuilt file.\n', subj);
+        continue;
     end
+
+    source = load(sourceFile, 'cda');
+    rebuilt = load(manualFile, 'cda');
+    cda0 = source.cda;
+    cda = rebuilt.cda;
+
+    timeIdx = cda.time >= cda0.time(1) & cda.time <= cda0.time(end);
+    if isempty(plotTime)
+        plotTime = cda.time(timeIdx);
+    end
+
+    % Load 2: attended-left uses right-left; attended-right uses left-right.
+    manualLoad2 = cat(1, ...
+        cda.trial.right_L_2(:,:,timeIdx) - cda.trial.left_L_2(:,:,timeIdx), ...
+        cda.trial.left_R_2(:,:,timeIdx)  - cda.trial.right_R_2(:,:,timeIdx));
+    manualLoad2 = squeeze(mean(mean(manualLoad2, 1, 'omitnan'), 2, 'omitnan'))';
+
+    % Load 6: same contra-minus-ipsi construction.
+    manualLoad6 = cat(1, ...
+        cda.trial.right_L_6(:,:,timeIdx) - cda.trial.left_L_6(:,:,timeIdx), ...
+        cda.trial.left_R_6(:,:,timeIdx)  - cda.trial.right_R_6(:,:,timeIdx));
+    manualLoad6 = squeeze(mean(mean(manualLoad6, 1, 'omitnan'), 2, 'omitnan'))';
+
+    sourceLoad2 = mean(cda0.diff_2, 1, 'omitnan');
+    sourceLoad6 = mean(cda0.diff_6, 1, 'omitnan');
+
+    cdaManual2 = cat(1, cdaManual2, manualLoad2);
+    cdaManual6 = cat(1, cdaManual6, manualLoad6);
+    cdaSource2 = cat(1, cdaSource2, sourceLoad2);
+    cdaSource6 = cat(1, cdaSource6, sourceLoad6);
 end
-disp("Finished!")
-    % figure
-    % subplot 121
-    % plot( cda2.time, cda1plot6, cda2.time, cda2plot6 ), hold on
-    % xline( 0, '--r','HandleVisibility','off'), yline( 0, '--r','HandleVisibility','off' ), legend({'cda1','cda2'})
-    % title( 'Load 6')
-    % subplot 122
-    % plot( cda2.time,cda1plot2 ,cda2.time,cda2plot2 ), hold on
-    % xline( 0, '--r','HandleVisibility','off' ), yline( 0, '--r','HandleVisibility','off' ), legend({'cda1','cda2'})
-    % title( 'Load 2')
 
+fprintf('Finished CDA comparison: n = %d subjects.\n', size(cdaManual2, 1));
 
-    %% plotting
-    xlim_plot = [-200 1000];
-    ylim_plot = [-1.5 1.5];
-    xlabel_p  = 'Times';
-    ylabel_p  = 'Baselined Potential(μv)';
-    legend1   = 'Manual create CDA';
-    legend2   = 'Original CDA';
-    myColor1 = [38, 121, 178]./255;
-    myColor2 = [235,111,41]./255;
-plot_shaded_errorbar_twoCurve(cda2.time, cda1total2, cda2total2, xlim_plot,ylim_plot,xlabel_p,ylabel_p,legend1,legend2,myColor1,myColor2)
+%% Plot
+xlim_plot = [-200 1000];
+ylim_plot = [-1.5 1.5];
+xlabel_p  = 'Time (ms)';
+ylabel_p  = 'Baselined Potential (uV)';
+legend1   = 'Rebuilt CDA';
+legend2   = 'Source CDA';
+myColor1 = [38, 121, 178] ./ 255;
+myColor2 = [235, 111, 41] ./ 255;
+
+fig2 = figure('Color', 'w');
+plot_shaded_errorbar_twoCurve(plotTime, cdaManual2, cdaSource2, ...
+    xlim_plot, ylim_plot, xlabel_p, ylabel_p, legend1, legend2, myColor1, myColor2);
+title('Load 2');
+savefig(fig2, fullfile(outputDir, 'compare_CDA_load2.fig'));
+print(fig2, fullfile(outputDir, 'compare_CDA_load2.png'), '-dpng', '-r300');
+
+fig6 = figure('Color', 'w');
+plot_shaded_errorbar_twoCurve(plotTime, cdaManual6, cdaSource6, ...
+    xlim_plot, ylim_plot, xlabel_p, ylabel_p, legend1, legend2, myColor1, myColor2);
+title('Load 6');
+savefig(fig6, fullfile(outputDir, 'compare_CDA_load6.fig'));
+print(fig6, fullfile(outputDir, 'compare_CDA_load6.png'), '-dpng', '-r300');

@@ -1,6 +1,8 @@
 clear; clc
 
-projectRoot = erase(pwd, 'code');
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
 statRoot    = fullfile(projectRoot, 'data1');
 
 datadir = fullfile(statRoot, 'cda_alpha');
@@ -62,10 +64,9 @@ for s = numel(files):-1:1
         modelName = modelNames{mi};
         outFile = fullfile(outputdir, modelName, file);
 
-        tmp = Results.(modelName);
-        eval([modelName ' = tmp;']);
-        save(outFile, modelName, '-v7.3')
-        clear(modelName)
+        out = struct();
+        out.(modelName) = Results.(modelName);
+        save(outFile, '-struct', 'out', '-v7.3')
     end
 end
 

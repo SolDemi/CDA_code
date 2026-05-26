@@ -5,7 +5,13 @@
 
 clear; clc;
 
-maindir = [erase(pwd, 'code'), 'data0'];
+codeDir = fileparts(mfilename('fullpath'));
+mainCodeDir = fileparts(codeDir);
+projectRoot = fileparts(mainCodeDir);
+addpath(mainCodeDir);
+addpath(codeDir);
+
+maindir = fullfile(projectRoot, 'data0');
 rootdir = fullfile(maindir, 'decoding_LDA_spatialControl');
 figdir = fullfile(rootdir, 'group_figures');
 if ~isfolder(figdir), mkdir(figdir); end
@@ -37,9 +43,9 @@ loadFeatures = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'
 
 allStats = struct();
 allStats.sideDecoding      = plot_feature_grid(rootdir, 'sideDecoding',      sideFeatures, metricCfg, statCfg, plotCfg, figdir);
-% allStats.loadWithinSide    = plot_feature_grid(rootdir, 'loadWithinSide',    loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-% allStats.loadSideBalanced  = plot_feature_grid(rootdir, 'loadSideBalanced',  loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-% allStats.loadCrossSide     = plot_feature_grid(rootdir, 'loadCrossSide',     loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+allStats.loadWithinSide    = plot_feature_grid(rootdir, 'loadWithinSide',    loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+allStats.loadSideBalanced  = plot_feature_grid(rootdir, 'loadSideBalanced',  loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+allStats.loadCrossSide     = plot_feature_grid(rootdir, 'loadCrossSide',     loadFeatures, metricCfg, statCfg, plotCfg, figdir);
 
 %% Maintenance-period summary: side evidence vs controlled load evidence
 summaryCfg = struct();
@@ -168,8 +174,8 @@ function summaryTable = plot_selectivity_summary(rootdir, summaryMap, summaryCfg
     for i = 1:n
         text(sideMean(i), loadMean(i), ['  ', char(labels(i))], 'Interpreter', 'none');
     end
-    xlabel('Side evidence: AUC - shuffle');
-    ylabel('Controlled load evidence: AUC - shuffle');
+    xlabel(['Side evidence: ', summaryCfg.metricCfg.metric]);
+    ylabel(['Controlled load evidence: ', summaryCfg.metricCfg.metric]);
     title(sprintf('Maintenance summary: %d-%d ms', summaryCfg.timeWin(1), summaryCfg.timeWin(2)));
     box off; grid on;
 

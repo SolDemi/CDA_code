@@ -16,19 +16,16 @@
 % This avoids storing multiple duplicated derived arrays such as diff,
 % contra/ipsi, global, and globalMean.
 
-dbstop if error
 clear; clc;
 
-%%%% all subjects
-subjects = [1:8,10:18,20:26,28:34,36:47,49:52,54:63,65:68,70,73:74,...
-    76,78:102,104:112,115:121,123:133,135:138,140:147,150,152:156,...
-    158:160,162:172,174:175,178:181,184:191,194,196:198,203:204,206:219];
+codeDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(codeDir);
+addpath(codeDir);
 
-datadir = pwd;
-maindir = [ erase(datadir,'code') 'data1'];
-homedir = [maindir,'\data_raw\'];
+maindir = fullfile(projectRoot, 'data1');
+homedir = fullfile(maindir, 'data_raw');
 rawfiles = dir(homedir);
-output_dir = [maindir '\cda_alpha\'];
+output_dir = fullfile(maindir, 'cda_alpha');
 if ~isfolder(output_dir)
     mkdir(output_dir)
 end
@@ -228,7 +225,7 @@ for s = 1:length(subjects)
     alpha = add_minimal_count_fields(alpha);
 
     %% Save
-    save([output_dir sprintf('sub%s.mat',sn)], 'cda', 'alpha', '-v7.3');
+    save(fullfile(output_dir, sprintf('sub%s.mat', sn)), 'cda', 'alpha', '-v7.3');
     fprintf('Subject %s complete!\n', sn);
 end
 
@@ -322,7 +319,7 @@ function Xout = run_power_function_keep_trial_chan_time(Xtrial, srate, time_ms, 
     nTm = size(Xtrial,3);
 
     Xin = permute(Xtrial, [2 3 1]);
-    Xpow = calculate_high_gamma_power(Xin, srate, time_ms, baselinewindow_ms, frep);
+    Xpow = calculate_hilbert_band_power(Xin, srate, time_ms, baselinewindow_ms, frep);
     Xout = coerce_to_trial_chan_time(Xpow, nTr, nCh, nTm);
 end
 
@@ -338,7 +335,7 @@ function X = coerce_to_trial_chan_time(Xin, nTr, nCh, nTm)
     elseif isequal(sz, [nTm, nCh, nTr])
         X = permute(Xin, [3 2 1]);
     else
-        error(['Unexpected output size from calculate_high_gamma_power: [' ...
+        error(['Unexpected output size from calculate_hilbert_band_power: [' ...
                num2str(sz) ']. Please check its output dimension order.']);
     end
 end
