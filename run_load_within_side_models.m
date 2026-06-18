@@ -28,276 +28,193 @@ if ~any(timeIdx)
 end
 times = times(timeIdx);
 
-cdaSide         = construct_lateralized_side_load_features(cda.trial,   timeIdx);
-alphaSide       = construct_lateralized_side_load_features(alpha.trial, timeIdx);
-globalAlphaSide = construct_global_alpha_side_load_features(alpha.trial, timeIdx, false);
-globalMeanSide  = construct_global_alpha_side_load_features(alpha.trial, timeIdx, true);
-
-Results = struct();
-
-cfgModel = cfg;
-cfgModel.doPCA = false;
-Results.CDA = decode_one_model(cdaSide, times, cfgModel, decoderFcn, 'CDA');
-
-cfgModel = cfg;
-cfgModel.doPCA = false;
-Results.Alpha = decode_one_model(alphaSide, times, cfgModel, decoderFcn, 'Alpha');
-
-cfgModel = cfg;
-cfgModel.doPCA = false;
-Results.GlobalAlpha = decode_one_model(globalAlphaSide, times, cfgModel, decoderFcn, 'GlobalAlpha');
-
-cfgModel = cfg;
-cfgModel.doPCA = false;
-Results.GlobalAlphaMean = decode_one_model(globalMeanSide, times, cfgModel, decoderFcn, 'GlobalAlphaMean');
-
-combinedSide = concatenate_feature_sets(cdaSide, alphaSide);
-
-cfgModel = cfg;
-cfgModel.doPCA = false;
-Results.NoPCA = decode_one_model(combinedSide, times, cfgModel, decoderFcn, 'NoPCA');
-
-cfgModel = cfg;
-cfgModel.doPCA = true;
-Results.PCA = decode_one_model(combinedSide, times, cfgModel, decoderFcn, 'PCA');
-
-end
-
-%% ========================================================================
-function sideData = construct_lateralized_side_load_features(T, timeIdx)
-% Return contra-minus-ipsi features separately for attended-left and
-% attended-right trials.
-%
-% For attended-left trials:  contra = right posterior, ipsi = left posterior.
-% For attended-right trials: contra = left posterior,  ipsi = right posterior.
-
-sideData = struct();
-sideData.L.low  = get_right_left_diff(T, 'L', 2, timeIdx);
-sideData.L.high = get_right_left_diff(T, 'L', 6, timeIdx);
-sideData.R.low  = get_left_right_diff(T, 'R', 2, timeIdx);
-sideData.R.high = get_left_right_diff(T, 'R', 6, timeIdx);
-
-end
-
-%% ========================================================================
-function sideData = construct_global_alpha_side_load_features(T, timeIdx, doMean)
-% Return global posterior alpha features separately for attended-left and
-% attended-right trials. If doMean=false, use all left+right posterior
-% channels. If doMean=true, average channels to one feature per trial/time.
-
-sideData = struct();
-sideData.L.low  = get_global_features(T, 'L', 2, timeIdx, doMean);
-sideData.L.high = get_global_features(T, 'L', 6, timeIdx, doMean);
-sideData.R.low  = get_global_features(T, 'R', 2, timeIdx, doMean);
-sideData.R.high = get_global_features(T, 'R', 6, timeIdx, doMean);
-
-end
-
-%% ========================================================================
-function X = get_right_left_diff(T, attendedSide, loadVal, timeIdx)
-
-[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
-X = rightX - leftX;
-
-end
-
-%% ========================================================================
-function X = get_left_right_diff(T, attendedSide, loadVal, timeIdx)
-
-[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
-X = leftX - rightX;
-
-end
-
-%% ========================================================================
-function X = get_global_features(T, attendedSide, loadVal, timeIdx, doMean)
-
-[leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx);
-X = cat(2, leftX, rightX);
-
-if doMean
-    X = mean(X, 2, 'omitnan');
-end
-
-end
-
-%% ========================================================================
-function [leftX, rightX] = get_abs_left_right(T, attendedSide, loadVal, timeIdx)
-
-loadStr = num2str(loadVal);
-leftName  = sprintf('left_%s_%s', attendedSide, loadStr);
-rightName = sprintf('right_%s_%s', attendedSide, loadStr);
-
-if isfield(T, leftName) && isfield(T, rightName)
-    leftX  = T.(leftName);
-    rightX = T.(rightName);
-else
-    [leftX, rightX] = get_abs_left_right_from_legacy_fields(T, attendedSide, loadVal);
-end
-
-check_abs_pair(leftX, rightX, attendedSide, loadStr);
-leftX  = leftX(:,:,timeIdx);
-rightX = rightX(:,:,timeIdx);
-
-end
-
-%% ========================================================================
-function [leftX, rightX] = get_abs_left_right_from_legacy_fields(T, attendedSide, loadVal)
-% Backward-compatible fallback for older files that still contain
-% contra/ipsi side-specific fields.
-
-loadStr = num2str(loadVal);
-contraName = sprintf('contra_%s_%s', attendedSide, loadStr);
-ipsiName   = sprintf('ipsi_%s_%s',   attendedSide, loadStr);
-
-if ~(isfield(T, contraName) && isfield(T, ipsiName))
-    fn = fieldnames(T);
-    preview = strjoin(fn(1:min(numel(fn), 30)), ', ');
-    error(['Missing minimal absolute fields left_%s_%s/right_%s_%s.\n' ...
-           'Also could not find legacy fields contra_%s_%s/ipsi_%s_%s.\n' ...
-           'Current trial fields begin with: %s\n' ...
-           'Please rerun cda_alpha.m using the minimal-storage version.'], ...
-           attendedSide, loadStr, attendedSide, loadStr, ...
-           attendedSide, loadStr, attendedSide, loadStr, preview);
-end
-
-contra = T.(contraName);
-ipsi   = T.(ipsiName);
-
-if strcmpi(attendedSide, 'L')
-    % attended-left: contra = right, ipsi = left
-    leftX  = ipsi;
-    rightX = contra;
-else
-    % attended-right: contra = left, ipsi = right
-    leftX  = contra;
-    rightX = ipsi;
-end
-
-end
-
-%% ========================================================================
-function check_abs_pair(leftX, rightX, attendedSide, loadStr)
-
-if ndims(leftX) ~= 3 || ndims(rightX) ~= 3
-    error('Fields for side %s, load %s must be trials x channels x time.', attendedSide, loadStr);
-end
-if ~isequal(size(leftX), size(rightX))
-    error('Left/right posterior fields do not match for side %s, load %s.', attendedSide, loadStr);
-end
-
-end
-
-%% ========================================================================
-function combined = concatenate_feature_sets(A, B)
-
-combined = struct();
 sideNames = {'L', 'R'};
 loadNames = {'low', 'high'};
+loadVals = [2 6];
 
+%% Data selection and feature construction
+cdaSide = struct();
+alphaSide = struct();
+globalAlphaSide = struct();
+globalMeanSide = struct();
+
+for sourceIdx = 1:2
+    if sourceIdx == 1
+        T = cda.trial;
+        targetName = 'cda';
+    else
+        T = alpha.trial;
+        targetName = 'alpha';
+    end
+
+    sideData = struct();
+    for si = 1:numel(sideNames)
+        attendedSide = sideNames{si};
+        for li = 1:numel(loadNames)
+            loadVal = loadVals(li);
+            loadStr = num2str(loadVal);
+            leftName = sprintf('left_%s_%s', attendedSide, loadStr);
+            rightName = sprintf('right_%s_%s', attendedSide, loadStr);
+
+            if isfield(T, leftName) && isfield(T, rightName)
+                leftX = T.(leftName);
+                rightX = T.(rightName);
+            else
+                contraName = sprintf('contra_%s_%s', attendedSide, loadStr);
+                ipsiName = sprintf('ipsi_%s_%s', attendedSide, loadStr);
+                if ~(isfield(T, contraName) && isfield(T, ipsiName))
+                    fn = fieldnames(T);
+                    preview = strjoin(fn(1:min(numel(fn), 30)), ', ');
+                    error(['Missing minimal absolute fields left_%s_%s/right_%s_%s.\n' ...
+                           'Also could not find legacy fields contra_%s_%s/ipsi_%s_%s.\n' ...
+                           'Current trial fields begin with: %s\n' ...
+                           'Please rerun cda_alpha.m using the minimal-storage version.'], ...
+                           attendedSide, loadStr, attendedSide, loadStr, ...
+                           attendedSide, loadStr, attendedSide, loadStr, preview);
+                end
+
+                contra = T.(contraName);
+                ipsi = T.(ipsiName);
+                if strcmpi(attendedSide, 'L')
+                    leftX = ipsi;
+                    rightX = contra;
+                else
+                    leftX = contra;
+                    rightX = ipsi;
+                end
+            end
+
+            if ndims(leftX) ~= 3 || ndims(rightX) ~= 3
+                error('Fields for side %s, load %s must be trials x channels x time.', attendedSide, loadStr);
+            end
+            if ~isequal(size(leftX), size(rightX))
+                error('Left/right posterior fields do not match for side %s, load %s.', attendedSide, loadStr);
+            end
+
+            leftX = leftX(:,:,timeIdx);
+            rightX = rightX(:,:,timeIdx);
+            if strcmpi(attendedSide, 'L')
+                sideData.(attendedSide).(loadNames{li}) = rightX - leftX;
+            else
+                sideData.(attendedSide).(loadNames{li}) = leftX - rightX;
+            end
+
+            if sourceIdx == 2
+                globalAlphaSide.(attendedSide).(loadNames{li}) = cat(2, leftX, rightX);
+                globalMeanSide.(attendedSide).(loadNames{li}) = mean(cat(2, leftX, rightX), 2, 'omitnan');
+            end
+        end
+    end
+
+    if strcmp(targetName, 'cda')
+        cdaSide = sideData;
+    else
+        alphaSide = sideData;
+    end
+end
+
+combinedSide = struct();
 for si = 1:numel(sideNames)
-    s = sideNames{si};
+    sideName = sideNames{si};
     for li = 1:numel(loadNames)
-        l = loadNames{li};
-
-        XA = A.(s).(l);
-        XB = B.(s).(l);
+        loadName = loadNames{li};
+        XA = cdaSide.(sideName).(loadName);
+        XB = alphaSide.(sideName).(loadName);
 
         if size(XA,1) ~= size(XB,1) || size(XA,3) ~= size(XB,3)
-            error('CDA and alpha trial/time counts do not match for side %s, load %s.', s, l);
+            error('CDA and alpha trial/time counts do not match for side %s, load %s.', sideName, loadName);
         end
 
-        combined.(s).(l) = cat(2, XA, XB);
+        combinedSide.(sideName).(loadName) = cat(2, XA, XB);
     end
 end
 
-end
+%% Trial balancing, model training/testing, side averaging, and result saving fields
+Results = struct();
+modelNames = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
+modelDoPCA = [false false false false false true];
+featureDescriptions = { ...
+    'Constructed on demand as contra-minus-ipsi within attended side.', ...
+    'Constructed on demand as contra-minus-ipsi within attended side.', ...
+    'Constructed on demand as absolute posterior alpha [left channels, right channels].', ...
+    'Constructed on demand as the trial-wise mean over absolute posterior alpha channels.', ...
+    'Constructed on demand by concatenating CDA contra-minus-ipsi and alpha contra-minus-ipsi features.', ...
+    'Constructed on demand by concatenating CDA contra-minus-ipsi and alpha contra-minus-ipsi features.'};
 
-%% ========================================================================
-function result = decode_one_model(sideData, times, cfg, decoderFcn, modelName)
+for mi = 1:numel(modelNames)
+    modelName = modelNames{mi};
+    cfgModel = cfg;
+    cfgModel.doPCA = modelDoPCA(mi);
 
-[dataL, labelsL] = make_binary_decoding_input(sideData.L.low, sideData.L.high);
-[dataR, labelsR] = make_binary_decoding_input(sideData.R.low, sideData.R.high);
-
-resL = decoderFcn(dataL, labelsL, times, cfg);
-resR = decoderFcn(dataR, labelsR, times, cfg);
-
-leftCounts  = [size(sideData.L.low,1), size(sideData.L.high,1)];
-rightCounts = [size(sideData.R.low,1), size(sideData.R.high,1)];
-
-result = average_result_structs(resL, resR);
-result.modelName = modelName;
-result.withinSide = struct();
-result.withinSide.description = 'Load decoding was run separately within attended-left and attended-right trials, then averaged across sides.';
-result.withinSide.leftCountsLowHigh = leftCounts;
-result.withinSide.rightCountsLowHigh = rightCounts;
-result.withinSide.averageMode = 'unweighted mean of left-side and right-side decoding results';
-result.withinSide.featureConstruction = feature_description(modelName);
-result.side = struct();
-result.side.Left  = keep_plot_relevant_fields(resL);
-result.side.Right = keep_plot_relevant_fields(resR);
-
-end
-
-%% ========================================================================
-function txt = feature_description(modelName)
-
-switch lower(modelName)
-    case {'cda','alpha'}
-        txt = 'Constructed on demand as contra-minus-ipsi within attended side.';
-    case 'globalalpha'
-        txt = 'Constructed on demand as absolute posterior alpha [left channels, right channels].';
-    case 'globalalphamean'
-        txt = 'Constructed on demand as the trial-wise mean over absolute posterior alpha channels.';
-    case {'nopca','pca'}
-        txt = 'Constructed on demand by concatenating CDA contra-minus-ipsi and alpha contra-minus-ipsi features.';
-    otherwise
-        txt = '';
-end
-
-end
-
-%% ========================================================================
-function [data, labels] = make_binary_decoding_input(lowData, highData)
-
-data = cat(1, lowData, highData);           % trials x channels x time
-data = permute(data, [2 3 1]);              % channels x time x trials
-labels = [ones(size(lowData,1),1); 2*ones(size(highData,1),1)];
-
-end
-
-%% ========================================================================
-function result = average_result_structs(A, B)
-
-result = A;
-fn = fieldnames(A);
-
-for i = 1:numel(fn)
-    f = fn{i};
-    if isfield(B, f) && isnumeric(A.(f)) && isnumeric(B.(f)) && isequal(size(A.(f)), size(B.(f)))
-        dim = ndims(A.(f)) + 1;
-        result.(f) = mean(cat(dim, A.(f), B.(f)), dim, 'omitnan');
+    switch modelName
+        case 'CDA'
+            sideData = cdaSide;
+        case 'Alpha'
+            sideData = alphaSide;
+        case 'GlobalAlpha'
+            sideData = globalAlphaSide;
+        case 'GlobalAlphaMean'
+            sideData = globalMeanSide;
+        case {'NoPCA', 'PCA'}
+            sideData = combinedSide;
+        otherwise
+            error('Unsupported model name: %s.', modelName);
     end
-end
 
-if isfield(result, 'cfg')
-    result.cfg.withinSideAverage = true;
-end
+    dataL = cat(1, sideData.L.low, sideData.L.high);
+    dataL = permute(dataL, [2 3 1]);
+    labelsL = [ones(size(sideData.L.low,1),1); 2*ones(size(sideData.L.high,1),1)];
 
-end
+    dataR = cat(1, sideData.R.low, sideData.R.high);
+    dataR = permute(dataR, [2 3 1]);
+    labelsR = [ones(size(sideData.R.low,1),1); 2*ones(size(sideData.R.high,1),1)];
 
-%% ========================================================================
-function S = keep_plot_relevant_fields(R)
+    resL = decoderFcn(dataL, labelsL, times, cfgModel);
+    resR = decoderFcn(dataR, labelsR, times, cfgModel);
 
-keep = {'Acc', 'AUC', 'AccShuffle', 'AUCShuffle', ...
-        'AccMinusShuffle', 'AUCMinusShuffle', 'AccTrain', 'times'};
-S = struct();
+    leftCounts = [size(sideData.L.low,1), size(sideData.L.high,1)];
+    rightCounts = [size(sideData.R.low,1), size(sideData.R.high,1)];
 
-for i = 1:numel(keep)
-    f = keep{i};
-    if isfield(R, f)
-        S.(f) = R.(f);
+    result = resL;
+    fn = fieldnames(resL);
+    for fi = 1:numel(fn)
+        f = fn{fi};
+        if isfield(resR, f) && isnumeric(resL.(f)) && isnumeric(resR.(f)) && isequal(size(resL.(f)), size(resR.(f)))
+            dim = ndims(resL.(f)) + 1;
+            result.(f) = mean(cat(dim, resL.(f), resR.(f)), dim, 'omitnan');
+        end
     end
+
+    if isfield(result, 'cfg')
+        result.cfg.withinSideAverage = true;
+    end
+
+    keep = {'Acc', 'AUC', 'AccShuffle', 'AUCShuffle', ...
+            'AccMinusShuffle', 'AUCMinusShuffle', 'AccTrain', 'times'};
+    sideLeft = struct();
+    sideRight = struct();
+    for ki = 1:numel(keep)
+        f = keep{ki};
+        if isfield(resL, f)
+            sideLeft.(f) = resL.(f);
+        end
+        if isfield(resR, f)
+            sideRight.(f) = resR.(f);
+        end
+    end
+
+    result.modelName = modelName;
+    result.withinSide = struct();
+    result.withinSide.description = 'Load decoding was run separately within attended-left and attended-right trials, then averaged across sides.';
+    result.withinSide.leftCountsLowHigh = leftCounts;
+    result.withinSide.rightCountsLowHigh = rightCounts;
+    result.withinSide.averageMode = 'unweighted mean of left-side and right-side decoding results';
+    result.withinSide.featureConstruction = featureDescriptions{mi};
+    result.side = struct();
+    result.side.Left = sideLeft;
+    result.side.Right = sideRight;
+
+    Results.(modelName) = result;
 end
 
 end

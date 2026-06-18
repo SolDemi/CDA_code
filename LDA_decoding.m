@@ -3,7 +3,7 @@ clear; clc
 codeDir = fileparts(mfilename('fullpath'));
 projectRoot = fileparts(codeDir);
 addpath(codeDir);
-statRoot    = fullfile(projectRoot, 'data1');
+statRoot    = fullfile(projectRoot, 'data2');
 
 datadir = fullfile(statRoot, 'cda_alpha');
 if ~isfolder(datadir)
@@ -20,11 +20,11 @@ end
 
 %% config
 cfg = struct();
-cfg.cvType = 'holdout';
+cfg.cvType = 'kfold';
 cfg.trainRatio = 2/3;
-cfg.nFolds = 3;
+cfg.nFolds = 5;
 cfg.superTrial = 1;
-cfg.nIter = 100;
+cfg.nIter = 50;
 
 cfg.smooth_window = 50;
 cfg.smooth_step = 50;
@@ -37,13 +37,13 @@ cfg.nPCs = 5;
 
 cfg.discrimType = 'diagLinear';
 cfg.ldaEngine = 'fitcdiscr';
-cfg.standardize = false;
+cfg.standardize = true;
 
-cfg.doShuffle = true;
+cfg.doShuffle = 0;
 cfg.balanceTrials = true;
 cfg.balanceNPerCell = [];
 cfg.balanceFactors = [];
-cfg.useAUC = true;
+cfg.useAUC = 1;
 cfg.useParallel = true;
 cfg.verbose = false;
 cfg.randomSeed = [];
@@ -57,6 +57,13 @@ for s = numel(files):-1:1
 
     load(fullfile(datadir, file), 'cda', 'alpha')
 
+    [includeSubject, inclusionInfo] = data2_subject_inclusion(cda);
+    if ~includeSubject
+        fprintf('Skip %s: original data2 criterion failed, min trials per condition = %d\n', ...
+            file, inclusionInfo.minTrialCount);
+        continue
+    end
+
     Results = run_load_within_side_models(cda, alpha, cfg, @LDA_function_singleSubj);
 
     for mi = 1:numel(modelNames)
@@ -64,6 +71,7 @@ for s = numel(files):-1:1
         outFile = fullfile(outputdir, modelName, file);
 
         out = struct();
+        Results.(modelName).subjectInclusion = inclusionInfo;
         out.(modelName) = Results.(modelName);
         save(outFile, '-struct', 'out', '-v7.3')
     end

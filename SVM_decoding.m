@@ -58,6 +58,13 @@ for s = numel(files):-1:1
 
     load(fullfile(datadir, file), 'cda', 'alpha')
 
+    [includeSubject, inclusionInfo] = data1_subject_inclusion(cda);
+    if ~includeSubject
+        fprintf('Skip %s: original data1 criterion failed, min trials per condition = %d\n', ...
+            file, inclusionInfo.minTrialCount);
+        continue
+    end
+
     Results = run_load_within_side_models(cda, alpha, cfg, @SVM_function_singleSubj);
 
     for mi = 1:numel(modelNames)
@@ -65,6 +72,7 @@ for s = numel(files):-1:1
         outFile = fullfile(outputdir, modelName, file);
 
         out = struct();
+        Results.(modelName).subjectInclusion = inclusionInfo;
         out.(modelName) = Results.(modelName);
         save(outFile, '-struct', 'out', '-v7.3')
     end

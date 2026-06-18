@@ -22,7 +22,7 @@ codeDir = fileparts(mfilename('fullpath'));
 projectRoot = fileparts(codeDir);
 addpath(codeDir);
 
-maindir = fullfile(projectRoot, 'data1');
+maindir = fullfile(projectRoot, 'data2');
 homedir = fullfile(maindir, 'data_raw');
 rawfiles = dir(homedir);
 output_dir = fullfile(maindir, 'cda_alpha');
@@ -72,8 +72,23 @@ for s = 1:length(subjects)
     erp.baseline = erp.baseline(1):erp.baseline(2);
 
     erp.allChans = erp.allChans(:)';
-    leftIdx  = get_channel_indices(erp.allChans, leftElecLabels);
-    rightIdx = get_channel_indices(erp.allChans, rightElecLabels);
+    leftIdx = zeros(1, numel(leftElecLabels));
+    for labelIdx = 1:numel(leftElecLabels)
+        thisIdx = find(strcmp(erp.allChans, leftElecLabels{labelIdx}), 1);
+        if isempty(thisIdx)
+            error('Channel %s not found.', leftElecLabels{labelIdx});
+        end
+        leftIdx(labelIdx) = thisIdx;
+    end
+
+    rightIdx = zeros(1, numel(rightElecLabels));
+    for labelIdx = 1:numel(rightElecLabels)
+        thisIdx = find(strcmp(erp.allChans, rightElecLabels{labelIdx}), 1);
+        if isempty(thisIdx)
+            error('Channel %s not found.', rightElecLabels{labelIdx});
+        end
+        rightIdx(labelIdx) = thisIdx;
+    end
 
     relPairLabels = {'O1/O2','OL/OR','P3/P4','PO3/PO4','T5/T6'};
 
@@ -162,7 +177,15 @@ for s = 1:length(subjects)
     end
 
     %% CDA/voltage: save only absolute posterior left/right channels
-    cda = init_minimal_struct(erp.srate, erp.times_ms, relPairLabels, leftElecLabels, rightElecLabels);
+    cda = struct();
+    cda.srate = erp.srate;
+    cda.time = erp.times_ms;
+    cda.relPairLabels = relPairLabels;
+    cda.leftElecLabels = leftElecLabels;
+    cda.rightElecLabels = rightElecLabels;
+    cda.fieldConvention = ['left_L_2/right_L_2 = posterior left/right hemisphere channels in attended-left load-2 trials; ' ...
+                           'left_R_2/right_R_2 = posterior left/right hemisphere channels in attended-right load-2 trials; same for load 6.'];
+    cda.trial = struct();
     cda.trials_per_cond = zeros(1, size(condPairs,1));
     cda.trials_per_side_cond = zeros(size(condPairs,1), 2); % columns: L, R
 
@@ -174,14 +197,51 @@ for s = 1:length(subjects)
         XL = erp.trial.(leftName);
         XR = erp.trial.(rightName);
 
-        cda.trial = add_absolute_condition_fields(cda.trial, XL, XR, outName, leftIdx, rightIdx);
+        cda.trial.(['left_L_'  outName]) = XL(:, leftIdx,  :);
+        cda.trial.(['right_L_' outName]) = XL(:, rightIdx, :);
+        cda.trial.(['left_R_'  outName]) = XR(:, leftIdx,  :);
+        cda.trial.(['right_R_' outName]) = XR(:, rightIdx, :);
         cda.trials_per_cond(p) = size(XL,1) + size(XR,1);
         cda.trials_per_side_cond(p,:) = [size(XL,1), size(XR,1)];
     end
 
-    cda.trial = add_absolute_load_fields(cda.trial);
-    cda.trial = remove_condition_level_absolute_fields(cda.trial);
-    cda = add_minimal_count_fields(cda);
+    hemiFields = {'left_L', 'right_L', 'left_R', 'right_R'};
+    loadDefs = {
+        '2', {'C2', 'S2'}
+        '6', {'C6', 'S6'}
+        };
+
+    for li = 1:size(loadDefs,1)
+        loadName = loadDefs{li,1};
+        conds = loadDefs{li,2};
+
+        for hi = 1:numel(hemiFields)
+            h = hemiFields{hi};
+            cda.trial.(sprintf('%s_%s', h, loadName)) = cat(1, ...
+                cda.trial.(sprintf('%s_%s', h, conds{1})), ...
+                cda.trial.(sprintf('%s_%s', h, conds{2})));
+        end
+    end
+
+    condsToRemove = {'C2', 'C6', 'S2', 'S6'};
+    removeList = {};
+    for hi = 1:numel(hemiFields)
+        for ci = 1:numel(condsToRemove)
+            removeList{end+1,1} = sprintf('%s_%s', hemiFields{hi}, condsToRemove{ci}); %#ok<AGROW>
+        end
+    end
+    fieldsToRemove = intersect(removeList, fieldnames(cda.trial));
+    if ~isempty(fieldsToRemove)
+        cda.trial = rmfield(cda.trial, fieldsToRemove);
+    end
+
+    cda.trials_per_side_load = [size(cda.trial.left_L_2,1), size(cda.trial.left_L_6,1); ...
+                                size(cda.trial.left_R_2,1), size(cda.trial.left_R_6,1)];
+    cda.trials_per_ss = [size(cda.trial.left_L_2,1) + size(cda.trial.left_R_2,1), ...
+                         size(cda.trial.left_L_6,1) + size(cda.trial.left_R_6,1)];
+    cda.min_trials_per_cond = min(cda.trials_per_cond);
+    cda.min_trials_per_ss = min(cda.trials_per_ss);
+    cda.min_trials_per_side_load = min(cda.trials_per_side_load, [], 'all');
 
     %% Alpha: compute power, then save only absolute posterior left/right channels
     alphaCond = struct();
@@ -194,11 +254,36 @@ for s = 1:length(subjects)
             continue;
         end
 
-        alphaCond.(fn) = run_power_function_keep_trial_chan_time( ...
-            Xraw, erp.srate, erp.times_ms, alpha_baseline_window_ms, frep);
+        nTr = size(Xraw,1);
+        nCh = size(Xraw,2);
+        nTm = size(Xraw,3);
+        Xin = permute(Xraw, [2 3 1]);
+        Xpow = calculate_hilbert_band_power(Xin, erp.srate, erp.times_ms, alpha_baseline_window_ms, frep);
+        sz = size(Xpow);
+
+        if isequal(sz, [nTr, nCh, nTm])
+            alphaCond.(fn) = Xpow;
+        elseif isequal(sz, [nCh, nTm, nTr])
+            alphaCond.(fn) = permute(Xpow, [3 1 2]);
+        elseif isequal(sz, [nTr, nTm, nCh])
+            alphaCond.(fn) = permute(Xpow, [1 3 2]);
+        elseif isequal(sz, [nTm, nCh, nTr])
+            alphaCond.(fn) = permute(Xpow, [3 2 1]);
+        else
+            error(['Unexpected output size from calculate_hilbert_band_power: [' ...
+                   num2str(sz) ']. Please check its output dimension order.']);
+        end
     end
 
-    alpha = init_minimal_struct(erp.srate, erp.times_ms, relPairLabels, leftElecLabels, rightElecLabels);
+    alpha = struct();
+    alpha.srate = erp.srate;
+    alpha.time = erp.times_ms;
+    alpha.relPairLabels = relPairLabels;
+    alpha.leftElecLabels = leftElecLabels;
+    alpha.rightElecLabels = rightElecLabels;
+    alpha.fieldConvention = ['left_L_2/right_L_2 = posterior left/right hemisphere channels in attended-left load-2 trials; ' ...
+                             'left_R_2/right_R_2 = posterior left/right hemisphere channels in attended-right load-2 trials; same for load 6.'];
+    alpha.trial = struct();
     alpha.baselinewindow_ms = alpha_baseline_window_ms;
     alpha.frep = frep;
     alpha.globalAlphaElecLabels = [leftElecLabels, rightElecLabels];
@@ -215,53 +300,14 @@ for s = 1:length(subjects)
         XL = alphaCond.(leftName);
         XR = alphaCond.(rightName);
 
-        alpha.trial = add_absolute_condition_fields(alpha.trial, XL, XR, outName, leftIdx, rightIdx);
+        alpha.trial.(['left_L_'  outName]) = XL(:, leftIdx,  :);
+        alpha.trial.(['right_L_' outName]) = XL(:, rightIdx, :);
+        alpha.trial.(['left_R_'  outName]) = XR(:, leftIdx,  :);
+        alpha.trial.(['right_R_' outName]) = XR(:, rightIdx, :);
         alpha.trials_per_cond(p) = size(XL,1) + size(XR,1);
         alpha.trials_per_side_cond(p,:) = [size(XL,1), size(XR,1)];
     end
 
-    alpha.trial = add_absolute_load_fields(alpha.trial);
-    alpha.trial = remove_condition_level_absolute_fields(alpha.trial);
-    alpha = add_minimal_count_fields(alpha);
-
-    %% Save
-    save(fullfile(output_dir, sprintf('sub%s.mat', sn)), 'cda', 'alpha', '-v7.3');
-    fprintf('Subject %s complete!\n', sn);
-end
-
-%% ========================= Helper functions =========================
-function S = init_minimal_struct(srate, times, relPairLabels, leftElecLabels, rightElecLabels)
-    S = struct();
-    S.srate = srate;
-    S.time = times;
-    S.relPairLabels = relPairLabels;
-    S.leftElecLabels = leftElecLabels;
-    S.rightElecLabels = rightElecLabels;
-    S.fieldConvention = ['left_L_2/right_L_2 = posterior left/right hemisphere channels in attended-left load-2 trials; ' ...
-                         'left_R_2/right_R_2 = posterior left/right hemisphere channels in attended-right load-2 trials; same for load 6.'];
-    S.trial = struct();
-end
-
-function idx = get_channel_indices(allChans, targetLabels)
-    idx = zeros(1, numel(targetLabels));
-    for i = 1:numel(targetLabels)
-        thisIdx = find(strcmp(allChans, targetLabels{i}), 1);
-        if isempty(thisIdx)
-            error('Channel %s not found.', targetLabels{i});
-        end
-        idx(i) = thisIdx;
-    end
-end
-
-function trial = add_absolute_condition_fields(trial, XL, XR, outName, leftIdx, rightIdx)
-% XL = attended-left trials, XR = attended-right trials.
-    trial.(['left_L_'  outName]) = XL(:, leftIdx,  :);
-    trial.(['right_L_' outName]) = XL(:, rightIdx, :);
-    trial.(['left_R_'  outName]) = XR(:, leftIdx,  :);
-    trial.(['right_R_' outName]) = XR(:, rightIdx, :);
-end
-
-function trial = add_absolute_load_fields(trial)
     hemiFields = {'left_L', 'right_L', 'left_R', 'right_R'};
     loadDefs = {
         '2', {'C2', 'S2'}
@@ -274,68 +320,34 @@ function trial = add_absolute_load_fields(trial)
 
         for hi = 1:numel(hemiFields)
             h = hemiFields{hi};
-            trial.(sprintf('%s_%s', h, loadName)) = cat(1, ...
-                trial.(sprintf('%s_%s', h, conds{1})), ...
-                trial.(sprintf('%s_%s', h, conds{2})));
+            alpha.trial.(sprintf('%s_%s', h, loadName)) = cat(1, ...
+                alpha.trial.(sprintf('%s_%s', h, conds{1})), ...
+                alpha.trial.(sprintf('%s_%s', h, conds{2})));
         end
     end
-end
 
-function trial = remove_condition_level_absolute_fields(trial)
-    hemiFields = {'left_L', 'right_L', 'left_R', 'right_R'};
-    conds = {'C2', 'C6', 'S2', 'S6'};
+    condsToRemove = {'C2', 'C6', 'S2', 'S6'};
     removeList = {};
-
     for hi = 1:numel(hemiFields)
-        for ci = 1:numel(conds)
-            removeList{end+1,1} = sprintf('%s_%s', hemiFields{hi}, conds{ci}); %#ok<AGROW>
+        for ci = 1:numel(condsToRemove)
+            removeList{end+1,1} = sprintf('%s_%s', hemiFields{hi}, condsToRemove{ci}); %#ok<AGROW>
         end
     end
-
-    fieldsToRemove = intersect(removeList, fieldnames(trial));
+    fieldsToRemove = intersect(removeList, fieldnames(alpha.trial));
     if ~isempty(fieldsToRemove)
-        trial = rmfield(trial, fieldsToRemove);
-    end
-end
-
-function S = add_minimal_count_fields(S)
-    S.trials_per_side_load = [size(S.trial.left_L_2,1), size(S.trial.left_L_6,1); ...
-                              size(S.trial.left_R_2,1), size(S.trial.left_R_6,1)]; % rows: attended L/R; columns: load 2/6
-    S.trials_per_ss = [size(S.trial.left_L_2,1) + size(S.trial.left_R_2,1), ...
-                       size(S.trial.left_L_6,1) + size(S.trial.left_R_6,1)];
-    S.min_trials_per_cond = min(S.trials_per_cond);
-    S.min_trials_per_ss = min(S.trials_per_ss);
-    S.min_trials_per_side_load = min(S.trials_per_side_load, [], 'all');
-end
-
-function Xout = run_power_function_keep_trial_chan_time(Xtrial, srate, time_ms, baselinewindow_ms, frep)
-    if isempty(Xtrial)
-        Xout = [];
-        return;
+        alpha.trial = rmfield(alpha.trial, fieldsToRemove);
     end
 
-    nTr = size(Xtrial,1);
-    nCh = size(Xtrial,2);
-    nTm = size(Xtrial,3);
+    alpha.trials_per_side_load = [size(alpha.trial.left_L_2,1), size(alpha.trial.left_L_6,1); ...
+                                  size(alpha.trial.left_R_2,1), size(alpha.trial.left_R_6,1)];
+    alpha.trials_per_ss = [size(alpha.trial.left_L_2,1) + size(alpha.trial.left_R_2,1), ...
+                           size(alpha.trial.left_L_6,1) + size(alpha.trial.left_R_6,1)];
+    alpha.min_trials_per_cond = min(alpha.trials_per_cond);
+    alpha.min_trials_per_ss = min(alpha.trials_per_ss);
+    alpha.min_trials_per_side_load = min(alpha.trials_per_side_load, [], 'all');
 
-    Xin = permute(Xtrial, [2 3 1]);
-    Xpow = calculate_hilbert_band_power(Xin, srate, time_ms, baselinewindow_ms, frep);
-    Xout = coerce_to_trial_chan_time(Xpow, nTr, nCh, nTm);
+    %% Save
+    save(fullfile(output_dir, sprintf('sub%s.mat', sn)), 'cda', 'alpha', '-v7.3');
+    fprintf('Subject %s complete!\n', sn);
 end
 
-function X = coerce_to_trial_chan_time(Xin, nTr, nCh, nTm)
-    sz = size(Xin);
-
-    if isequal(sz, [nTr, nCh, nTm])
-        X = Xin;
-    elseif isequal(sz, [nCh, nTm, nTr])
-        X = permute(Xin, [3 1 2]);
-    elseif isequal(sz, [nTr, nTm, nCh])
-        X = permute(Xin, [1 3 2]);
-    elseif isequal(sz, [nTm, nCh, nTr])
-        X = permute(Xin, [3 2 1]);
-    else
-        error(['Unexpected output size from calculate_hilbert_band_power: [' ...
-               num2str(sz) ']. Please check its output dimension order.']);
-    end
-end

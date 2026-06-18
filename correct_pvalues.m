@@ -49,10 +49,24 @@ switch lower(method)
         pAdjValid = min(pValid .* numel(pValid), 1);
 
     case 'holm'
-        pAdjValid = holm_adjust(pValid);
+        pTmp = pValid(:);
+        pAdjValid = nan(size(pTmp));
+        [ps, idx] = sort(pTmp);
+        m = numel(ps);
+        adj = (m - (1:m)' + 1) .* ps;
+        adj = cummax(adj);
+        adj = min(adj, 1);
+        pAdjValid(idx) = adj;
 
     case {'fdr', 'bh', 'benjamini-hochberg', 'benjamini_hochberg'}
-        pAdjValid = fdr_bh_adjust(pValid);
+        pTmp = pValid(:);
+        pAdjValid = nan(size(pTmp));
+        [ps, idx] = sort(pTmp);
+        m = numel(ps);
+        adj = ps .* m ./ (1:m)';
+        adj = flipud(cummin(flipud(adj)));
+        adj = min(adj, 1);
+        pAdjValid(idx) = adj;
 
     otherwise
         error('Unknown correction method: %s. Use holm, fdr, bonferroni, or none.', method);
@@ -67,39 +81,5 @@ info.method = lower(method);
 info.alpha = alpha;
 info.nValid = numel(pValid);
 info.inputSize = origSize;
-
-end
-
-%% ========================================================================
-function pAdj = holm_adjust(p)
-
-p = p(:);
-pAdj = nan(size(p));
-
-[ps, idx] = sort(p);
-m = numel(ps);
-
-adj = (m - (1:m)' + 1) .* ps;
-adj = cummax(adj);
-adj = min(adj, 1);
-
-pAdj(idx) = adj;
-
-end
-
-%% ========================================================================
-function pAdj = fdr_bh_adjust(p)
-
-p = p(:);
-pAdj = nan(size(p));
-
-[ps, idx] = sort(p);
-m = numel(ps);
-
-adj = ps .* m ./ (1:m)';
-adj = flipud(cummin(flipud(adj)));
-adj = min(adj, 1);
-
-pAdj(idx) = adj;
 
 end

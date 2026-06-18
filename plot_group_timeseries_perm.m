@@ -33,7 +33,22 @@ function [stat, h] = plot_group_timeseries_perm(data, times, cfg)
 if nargin < 3 || isempty(cfg)
     cfg = struct();
 end
-cfg = fill_default_plot_cfg(cfg);
+if ~isfield(cfg, 'doPlot'),          cfg.doPlot = true; end
+if ~isfield(cfg, 'color'),           cfg.color = [0 0.4470 0.7410]; end
+if ~isfield(cfg, 'xlim'),            cfg.xlim = []; end
+if ~isfield(cfg, 'ylim'),            cfg.ylim = []; end
+if ~isfield(cfg, 'xlabel'),          cfg.xlabel = 'Time (ms)'; end
+if ~isfield(cfg, 'ylabel'),          cfg.ylabel = 'Value'; end
+if ~isfield(cfg, 'title'),           cfg.title = ''; end
+if ~isfield(cfg, 'eventLines'),      cfg.eventLines = 0; end
+if ~isfield(cfg, 'eventLineLabels'), cfg.eventLineLabels = {}; end
+if ~isfield(cfg, 'sigBarPosition'),  cfg.sigBarPosition = 'bottom'; end
+if ~isfield(cfg, 'showLegend'),      cfg.showLegend = false; end
+if ~isfield(cfg, 'label'),           cfg.label = 'Mean'; end
+
+if numel(cfg.color) ~= 3
+    error('cfg.color must be a 1 x 3 RGB vector.');
+end
 
 stat = cluster_perm_1d_timeseries(data, times, cfg);
 
@@ -109,25 +124,4 @@ if cfg.showLegend
     legend boxoff;
 end
 
-end
-
-%% ========================================================================
-function cfg = fill_default_plot_cfg(cfg)
-% Statistical defaults are filled again inside cluster_perm_1d_timeseries.
-if ~isfield(cfg, 'doPlot'),          cfg.doPlot = true; end
-if ~isfield(cfg, 'color'),           cfg.color = [0 0.4470 0.7410]; end
-if ~isfield(cfg, 'xlim'),            cfg.xlim = []; end
-if ~isfield(cfg, 'ylim'),            cfg.ylim = []; end
-if ~isfield(cfg, 'xlabel'),          cfg.xlabel = 'Time (ms)'; end
-if ~isfield(cfg, 'ylabel'),          cfg.ylabel = 'Value'; end
-if ~isfield(cfg, 'title'),           cfg.title = ''; end
-if ~isfield(cfg, 'eventLines'),      cfg.eventLines = 0; end
-if ~isfield(cfg, 'eventLineLabels'), cfg.eventLineLabels = {}; end
-if ~isfield(cfg, 'sigBarPosition'),  cfg.sigBarPosition = 'bottom'; end
-if ~isfield(cfg, 'showLegend'),      cfg.showLegend = false; end
-if ~isfield(cfg, 'label'),           cfg.label = 'Mean'; end
-
-if numel(cfg.color) ~= 3
-    error('cfg.color must be a 1 x 3 RGB vector.');
-end
 end

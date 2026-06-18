@@ -1,198 +1,10 @@
 function result = SVM_function_singleSubj(eegData, labels, times, cfg)
 % SVM_function_singleSubj
 % Lightweight time-resolved / time-generalization binary SVM decoding.
-%
-% Required external functions on MATLAB path:
-%   balance_trials_by_label.m   % optional trial balancing
-%   func_make_superTrials.m     % optional supertrial averaging
-%
-% Key cfg fields:
-%   cfg.cvType               : 'holdout' or 'kfold' default = 'kfold'
-%   cfg.trainRatio           : training proportion for holdout default = 2/3
-%   cfg.nFolds               : K for kfold default = 10
-%   cfg.nIter                : random iterations default = 1
-%   cfg.doShuffle            : shuffled-training-label baseline default = false
-%   cfg.useAUC               : compute AUC/perfcurve default = false
-%   cfg.balanceTrials        : downsample classes each iter default = false
-%   cfg.useParallel          : use parfor over cfg.nIter default = false
-%   cfg.superTrial           : trials averaged into supertrial default = 1
-%
-% SVM-specific cfg fields:
-%   cfg.kernelFunction       : default = 'linear'
-%   cfg.kernelScale          : default = 'auto'
-%   cfg.boxConstraint        : default = 1
-%   cfg.standardize          : z-score using training data default = false
-%
-% Outputs:
-%   result.Acc, result.AccTrain, result.weights
-%   result.AUC only if cfg.useAUC = true
-%   result.AccShuffle, result.AccMinusShuffle if doShuffle = true
-%   result.AUCShuffle, result.AUCMinusShuffle only if doShuffle && useAUC
 
 if nargin < 4 || isempty(cfg), cfg = struct(); end
-cfg = fill_default_cfg(cfg);
 
-labels = labels(:);
-times  = times(:)';
-[~, nTime, nTrials] = size(eegData);
-
-if numel(labels) ~= nTrials || numel(times) ~= nTime
-    error('Mismatch among eegData, labels, and times.');
-end
-
-uLabels = unique(labels);
-if numel(uLabels) ~= 2
-    error('SVM_function_singleSubj currently supports binary classification only.');
-end
-
-if ~isempty(cfg.randomSeed)
-    rng(cfg.randomSeed, 'twister');
-end
-
-% Temporal binning/smoothing.
-if cfg.smooth_window > 0 || ~isempty(cfg.smooth_step)
-    [eegData, times] = apply_temporal_window(eegData, times, cfg.smooth_window, cfg.smooth_step, cfg.timeWindowMode);
-end
-[nCh, nTime, ~] = size(eegData);
-
-% Relabel to 1/2 internally.
-labels_internal = zeros(size(labels));
-labels_internal(labels == uLabels(1)) = 1;
-labels_internal(labels == uLabels(2)) = 2;
-
-if strcmpi(cfg.cvType, 'holdout')
-    nSplits = 1;
-else
-    nSplits = cfg.nFolds;
-end
-
-Acc_all = nan(nTime, nTime, nSplits, cfg.nIter);
-trainAcc_all   = nan(nSplits, nTime, cfg.nIter);
-weights_all    = nan(nCh, nTime, nSplits, cfg.nIter);
-
-if cfg.useAUC
-    AUC_all = nan(nTime, nTime, nSplits, cfg.nIter);
-else
-    AUC_all = [];
-end
-
-if cfg.doShuffle
-    AccShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
-    if cfg.useAUC
-        AUCShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
-    else
-        AUCShuffle_all = [];
-    end
-else
-    AccShuffle_all = [];
-    AUCShuffle_all = [];
-end
-
-balanceInfo = cell(cfg.nIter, 1);
-
-% Parallelization is intentionally placed at the iteration level.
-if cfg.useParallel
-    parfor sampi = 1:cfg.nIter
-        [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-            AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
-            eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg);
-
-        Acc_all(:,:,:,sampi) = Acc_iter;
-        trainAcc_all(:,:,sampi) = trainAcc_iter;
-        weights_all(:,:,:,sampi) = weights_iter;
-        balanceInfo{sampi} = balanceInfo_iter;
-
-        if cfg.useAUC
-            AUC_all(:,:,:,sampi) = AUC_iter;
-        end
-        if cfg.doShuffle
-            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
-            if cfg.useAUC
-                AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter;
-            end
-        end
-        if cfg.verbose
-            fprintf(' sample %d/%d done\n', sampi, cfg.nIter);
-        end
-    end
-else
-    for sampi = 1:cfg.nIter
-        [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-            AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
-            eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg);
-
-        Acc_all(:,:,:,sampi) = Acc_iter;
-        trainAcc_all(:,:,sampi) = trainAcc_iter;
-        weights_all(:,:,:,sampi) = weights_iter;
-        balanceInfo{sampi} = balanceInfo_iter;
-
-        if cfg.useAUC
-            AUC_all(:,:,:,sampi) = AUC_iter;
-        end
-        if cfg.doShuffle
-            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
-            if cfg.useAUC
-                AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter;
-            end
-        end
-        if cfg.verbose
-            fprintf(' sample %d/%d done\n', sampi, cfg.nIter);
-        end
-    end
-end
-
-Acc = squeeze(mean(mean(Acc_all, 3, 'omitnan'), 4, 'omitnan'));
-weights    = squeeze(mean(mean(weights_all, 3, 'omitnan'), 4, 'omitnan'));
-trainAcc   = squeeze(mean(mean(trainAcc_all, 1, 'omitnan'), 3, 'omitnan'));
-
-if cfg.useAUC
-    AUC = squeeze(mean(mean(AUC_all, 3, 'omitnan'), 4, 'omitnan'));
-end
-
-if ~cfg.doTimeGeneralization
-    Acc = keep_diagonal_only(Acc);
-    if cfg.useAUC
-        AUC = keep_diagonal_only(AUC);
-    end
-end
-
-result = struct();
-result.Acc = Acc;
-if cfg.useAUC
-    result.AUC = AUC;
-end
-result.AccTrain = trainAcc(:);
-result.weights = weights;
-result.times = times(:);
-result.cfg = cfg;
-result.classLabelsOriginal = uLabels;
-result.balanceInfo = balanceInfo;
-
-if cfg.doShuffle
-    AccShuffle = squeeze(mean(mean(AccShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
-    if ~cfg.doTimeGeneralization
-        AccShuffle = keep_diagonal_only(AccShuffle);
-    end
-
-    result.AccShuffle = AccShuffle;
-    result.AccMinusShuffle = Acc - AccShuffle;
-
-    if cfg.useAUC
-        AUCShuffle = squeeze(mean(mean(AUCShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
-        if ~cfg.doTimeGeneralization
-            AUCShuffle = keep_diagonal_only(AUCShuffle);
-        end
-        result.AUCShuffle = AUCShuffle;
-        result.AUCMinusShuffle = AUC - AUCShuffle;
-    end
-end
-
-end
-
-%% ========================================================================
-function cfg = fill_default_cfg(cfg)
-
-% Backward-compatible aliases.
+% Backward-compatible aliases and defaults.
 if isfield(cfg,'avgNTrials') && ~isfield(cfg,'superTrial'), cfg.superTrial = cfg.avgNTrials; end
 if isfield(cfg,'binSize') && ~isfield(cfg,'smooth_window'), cfg.smooth_window = cfg.binSize; end
 if isfield(cfg,'seed') && ~isfield(cfg,'randomSeed'), cfg.randomSeed = cfg.seed; end
@@ -219,8 +31,8 @@ if ~isfield(cfg,'balanceFactors'), cfg.balanceFactors = []; end
 if ~isfield(cfg,'verbose'), cfg.verbose = true; end
 if ~isfield(cfg,'randomSeed'), cfg.randomSeed = []; end
 if ~isfield(cfg,'useParallel'), cfg.useParallel = false; end
-
-% SVM-specific cfg fields.
+if ~isfield(cfg,'parallelDimension'), cfg.parallelDimension = 'auto'; end
+if ~isfield(cfg,'parallelMaxWorkers'), cfg.parallelMaxWorkers = Inf; end
 if ~isfield(cfg,'kernelFunction'), cfg.kernelFunction = 'linear'; end
 if ~isfield(cfg,'kernelScale'), cfg.kernelScale = 'auto'; end
 if ~isfield(cfg,'boxConstraint'), cfg.boxConstraint = 1; end
@@ -230,43 +42,274 @@ if ~isfield(cfg,'scoreTransform'), cfg.scoreTransform = []; end
 cfg.cvType = lower(char(cfg.cvType));
 cfg.timeWindowMode = lower(char(cfg.timeWindowMode));
 cfg.kernelFunction = char(cfg.kernelFunction);
+cfg.parallelDimension = lower(char(cfg.parallelDimension));
+
+if ~ismember(cfg.cvType, {'holdout','kfold'})
+    error('cfg.cvType must be ''holdout'' or ''kfold''.');
+end
+if ~ismember(cfg.parallelDimension, {'auto','iteration','iter','split','fold','kfold','none'})
+    error('cfg.parallelDimension must be ''auto'', ''iteration'', ''split'', or ''none''.');
+end
+
+labels = labels(:);
+times  = times(:)';
+[~, nTime, nTrials] = size(eegData);
+
+if numel(labels) ~= nTrials || numel(times) ~= nTime
+    error('Mismatch among eegData, labels, and times.');
+end
+
+uLabels = unique(labels);
+if numel(uLabels) ~= 2
+    error('SVM_function_singleSubj currently supports binary classification only.');
+end
+
+if ~isempty(cfg.randomSeed)
+    rng(cfg.randomSeed, 'twister');
+end
+
+%% Temporal binning/smoothing
+if cfg.smooth_window > 0 || ~isempty(cfg.smooth_step)
+    win = cfg.smooth_window;
+    step = cfg.smooth_step;
+    if isempty(step), step = win; end
+
+    if strcmpi(cfg.timeWindowMode, 'bin')
+        binStarts = times(1):step:(times(end)-win);
+        eegOut = zeros(size(eegData,1), numel(binStarts), size(eegData,3), 'like', eegData);
+        timesOut = binStarts + win/2;
+
+        for bi = 1:numel(binStarts)
+            t1 = binStarts(bi);
+            t2 = t1 + win;
+            if bi < numel(binStarts)
+                tidx = times >= t1 & times < t2;
+            else
+                tidx = times >= t1 & times <= t2;
+            end
+            eegOut(:,bi,:) = mean(eegData(:,tidx,:), 2, 'omitnan');
+        end
+    else
+        if win > 0
+            halfWin = win/2;
+            centerIdx = find(times >= times(1)+halfWin & times <= times(end)-halfWin);
+        else
+            centerIdx = 1:numel(times);
+        end
+
+        if ~isempty(step)
+            targetTimes = times(centerIdx(1)):step:times(centerIdx(end));
+            tmp = nan(size(targetTimes));
+            for ii = 1:numel(targetTimes)
+                [~, k] = min(abs(times(centerIdx)-targetTimes(ii)));
+                tmp(ii) = centerIdx(k);
+            end
+            centerIdx = unique(tmp, 'stable');
+        end
+
+        eegOut = zeros(size(eegData,1), numel(centerIdx), size(eegData,3), 'like', eegData);
+        timesOut = times(centerIdx);
+
+        for ii = 1:numel(centerIdx)
+            ct = times(centerIdx(ii));
+            if win > 0
+                tidx = times >= ct-win/2 & times <= ct+win/2;
+            else
+                tidx = centerIdx(ii);
+            end
+            eegOut(:,ii,:) = mean(eegData(:,tidx,:), 2, 'omitnan');
+        end
+    end
+
+    eegData = eegOut;
+    times = timesOut;
+end
+[nCh, nTime, ~] = size(eegData);
+
+labels_internal = zeros(size(labels));
+labels_internal(labels == uLabels(1)) = 1;
+labels_internal(labels == uLabels(2)) = 2;
+
+if strcmpi(cfg.cvType, 'holdout')
+    nSplits = 1;
+else
+    nSplits = cfg.nFolds;
+end
+
+if ~cfg.useParallel
+    cfg.parallelDimensionEffective = 'none';
+else
+    switch lower(cfg.parallelDimension)
+        case 'auto'
+            if cfg.nIter > 1
+                cfg.parallelDimensionEffective = 'iteration';
+            elseif nSplits > 1
+                cfg.parallelDimensionEffective = 'split';
+            else
+                cfg.parallelDimensionEffective = 'none';
+            end
+        case {'iteration','iter'}
+            if cfg.nIter > 1
+                cfg.parallelDimensionEffective = 'iteration';
+            elseif nSplits > 1
+                cfg.parallelDimensionEffective = 'split';
+            else
+                cfg.parallelDimensionEffective = 'none';
+            end
+        case {'split','fold','kfold'}
+            if nSplits > 1, cfg.parallelDimensionEffective = 'split'; else, cfg.parallelDimensionEffective = 'none'; end
+        case 'none'
+            cfg.parallelDimensionEffective = 'none';
+    end
+end
+parallelWorkers = 0;
+if strcmpi(cfg.parallelDimensionEffective, 'none')
+    splitWorkers = 0;
+else
+    parallelWorkers = cfg.parallelMaxWorkers;
+    if parallelWorkers <= 0
+        cfg.parallelDimensionEffective = 'none';
+        parallelWorkers = 0;
+    elseif isempty(gcp('nocreate'))
+        if isfinite(parallelWorkers)
+            parpool(parallelWorkers);
+        else
+            parpool;
+        end
+    end
+    if strcmpi(cfg.parallelDimensionEffective, 'split')
+        splitWorkers = parallelWorkers;
+    else
+        splitWorkers = 0;
+    end
+end
+
+Acc_all = nan(nTime, nTime, nSplits, cfg.nIter);
+trainAcc_all = nan(nSplits, nTime, cfg.nIter);
+weights_all = nan(nCh, nTime, nSplits, cfg.nIter);
+
+if cfg.useAUC
+    AUC_all = nan(nTime, nTime, nSplits, cfg.nIter);
+else
+    AUC_all = [];
+end
+
+if cfg.doShuffle
+    AccShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
+    if cfg.useAUC
+        AUCShuffle_all = nan(nTime, nTime, nSplits, cfg.nIter);
+    else
+        AUCShuffle_all = [];
+    end
+else
+    AccShuffle_all = [];
+    AUCShuffle_all = [];
+end
+
+balanceInfo = cell(cfg.nIter, 1);
+
+%% Trial balancing, supertrial construction, CV split, model training/testing
+if strcmpi(cfg.parallelDimensionEffective, 'iteration')
+    parfor (sampi = 1:cfg.nIter, parallelWorkers)
+        [Acc_iter, trainAcc_iter, weights_iter, AUC_iter, AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = ...
+            svm_run_iteration(eegData, labels_internal, sampi, nSplits, nCh, nTime, cfg, 0);
+
+        Acc_all(:,:,:,sampi) = Acc_iter;
+        trainAcc_all(:,:,sampi) = trainAcc_iter;
+        weights_all(:,:,:,sampi) = weights_iter;
+        if cfg.useAUC, AUC_all(:,:,:,sampi) = AUC_iter; end
+        if cfg.doShuffle
+            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
+            if cfg.useAUC, AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter; end
+        end
+        balanceInfo{sampi} = balanceInfo_iter;
+        if cfg.verbose
+            fprintf(' sample %d/%d done\n', sampi, cfg.nIter);
+        end
+    end
+else
+    for sampi = 1:cfg.nIter
+        [Acc_iter, trainAcc_iter, weights_iter, AUC_iter, AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = ...
+            svm_run_iteration(eegData, labels_internal, sampi, nSplits, nCh, nTime, cfg, splitWorkers);
+
+        Acc_all(:,:,:,sampi) = Acc_iter;
+        trainAcc_all(:,:,sampi) = trainAcc_iter;
+        weights_all(:,:,:,sampi) = weights_iter;
+        if cfg.useAUC, AUC_all(:,:,:,sampi) = AUC_iter; end
+        if cfg.doShuffle
+            AccShuffle_all(:,:,:,sampi) = AccShuffle_iter;
+            if cfg.useAUC, AUCShuffle_all(:,:,:,sampi) = AUCShuffle_iter; end
+        end
+        balanceInfo{sampi} = balanceInfo_iter;
+        if cfg.verbose
+            fprintf(' sample %d/%d done\n', sampi, cfg.nIter);
+        end
+    end
+end
+
+Acc = squeeze(mean(mean(Acc_all, 3, 'omitnan'), 4, 'omitnan'));
+weights = squeeze(mean(mean(weights_all, 3, 'omitnan'), 4, 'omitnan'));
+trainAcc = squeeze(mean(mean(trainAcc_all, 1, 'omitnan'), 3, 'omitnan'));
+
+if cfg.useAUC
+    AUC = squeeze(mean(mean(AUC_all, 3, 'omitnan'), 4, 'omitnan'));
+end
+
+if ~cfg.doTimeGeneralization
+    d = diag(Acc);
+    Acc(:) = NaN;
+    Acc(1:size(Acc,1)+1:end) = d;
+    if cfg.useAUC
+        d = diag(AUC);
+        AUC(:) = NaN;
+        AUC(1:size(AUC,1)+1:end) = d;
+    end
+end
+
+result = struct();
+result.Acc = Acc;
+if cfg.useAUC
+    result.AUC = AUC;
+end
+result.AccTrain = trainAcc(:);
+result.weights = weights;
+result.times = times(:);
+result.cfg = cfg;
+result.classLabelsOriginal = uLabels;
+result.balanceInfo = balanceInfo;
+
+if cfg.doShuffle
+    AccShuffle = squeeze(mean(mean(AccShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
+    if ~cfg.doTimeGeneralization
+        d = diag(AccShuffle);
+        AccShuffle(:) = NaN;
+        AccShuffle(1:size(AccShuffle,1)+1:end) = d;
+    end
+
+    result.AccShuffle = AccShuffle;
+    result.AccMinusShuffle = Acc - AccShuffle;
+
+    if cfg.useAUC
+        AUCShuffle = squeeze(mean(mean(AUCShuffle_all, 3, 'omitnan'), 4, 'omitnan'));
+        if ~cfg.doTimeGeneralization
+            d = diag(AUCShuffle);
+            AUCShuffle(:) = NaN;
+            AUCShuffle(1:size(AUCShuffle,1)+1:end) = d;
+        end
+        result.AUCShuffle = AUCShuffle;
+        result.AUCMinusShuffle = AUC - AUCShuffle;
+    end
+end
 
 end
 
-%% ========================================================================
-function [Acc_iter, AUC_iter, trainAcc_iter, weights_iter, ...
-    AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = run_one_iteration( ...
-    eegData, labels_internal, sampi, nTime, nCh, nSplits, cfg)
+function [Acc_iter, trainAcc_iter, weights_iter, AUC_iter, AccShuffle_iter, AUCShuffle_iter, balanceInfo_iter] = ...
+    svm_run_iteration(eegData, labels_internal, sampi, nSplits, nCh, nTime, cfg, splitWorkers)
 
 if ~isempty(cfg.randomSeed)
     rng(cfg.randomSeed + sampi - 1, 'twister');
 end
 
-Acc_iter = nan(nTime, nTime, nSplits);
-trainAcc_iter   = nan(nSplits, nTime);
-weights_iter    = nan(nCh, nTime, nSplits);
-
-if cfg.useAUC
-    AUC_iter = nan(nTime, nTime, nSplits);
-else
-    AUC_iter = [];
-end
-
-if cfg.doShuffle
-    AccShuffle_iter = nan(nTime, nTime, nSplits);
-    if cfg.useAUC
-        AUCShuffle_iter = nan(nTime, nTime, nSplits);
-    else
-        AUCShuffle_iter = [];
-    end
-else
-    AccShuffle_iter = [];
-    AUCShuffle_iter = [];
-end
-
-balanceInfo_iter = [];
-
-% Optional trial balancing.
 if cfg.balanceTrials
     balLabels = labels_internal(:);
     if ~isempty(cfg.balanceFactors)
@@ -282,9 +325,9 @@ if cfg.balanceTrials
 else
     dataIter = eegData;
     labelsIter = labels_internal;
+    balanceInfo_iter = [];
 end
 
-% Optional supertrials, separately within each class.
 data1 = dataIter(:,:,labelsIter == 1);
 data2 = dataIter(:,:,labelsIter == 2);
 if cfg.superTrial > 1
@@ -295,263 +338,184 @@ end
 allTrials = cat(3, data1, data2);
 allLabels = [ones(size(data1,3),1); 2*ones(size(data2,3),1)];
 
-[trainIdxList, testIdxList] = make_cv_splits(allLabels, cfg);
+if strcmpi(cfg.cvType, 'holdout')
+    CVO = cvpartition(allLabels, 'HoldOut', 1 - cfg.trainRatio);
+    trainIdxList = {training(CVO)};
+    testIdxList  = {test(CVO)};
+else
+    CVO = cvpartition(allLabels, 'KFold', cfg.nFolds);
+    trainIdxList = cell(cfg.nFolds, 1);
+    testIdxList = cell(cfg.nFolds, 1);
+    for fi = 1:cfg.nFolds
+        trainIdxList{fi} = training(CVO, fi);
+        testIdxList{fi} = test(CVO, fi);
+    end
+end
 
-for spliti = 1:nSplits
+Acc_iter = nan(nTime, nTime, nSplits);
+trainAcc_iter = nan(nSplits, nTime);
+weights_iter = nan(nCh, nTime, nSplits);
+if cfg.useAUC, AUC_iter = nan(nTime, nTime, nSplits); else, AUC_iter = []; end
+if cfg.doShuffle
+    AccShuffle_iter = nan(nTime, nTime, nSplits);
+    if cfg.useAUC, AUCShuffle_iter = nan(nTime, nTime, nSplits); else, AUCShuffle_iter = []; end
+else
+    AccShuffle_iter = [];
+    AUCShuffle_iter = [];
+end
+
+parfor (spliti = 1:nSplits, splitWorkers)
     trainIdx = trainIdxList{spliti};
-    testIdx  = testIdxList{spliti};
+    testIdx = testIdxList{spliti};
     trainY = allLabels(trainIdx);
-    testY  = allLabels(testIdx);
+    testY = allLabels(testIdx);
+
+    Acc_split = nan(nTime, nTime);
+    trainAcc_split = nan(1, nTime);
+    weights_split = nan(nCh, nTime);
+    if cfg.useAUC, AUC_split = nan(nTime, nTime); else, AUC_split = []; end
 
     if cfg.doShuffle
+        AccShuffle_split = nan(nTime, nTime);
+        if cfg.useAUC, AUCShuffle_split = nan(nTime, nTime); else, AUCShuffle_split = []; end
+
+        if ~isempty(cfg.randomSeed)
+            rng(cfg.randomSeed + (sampi - 1) * 100000 + spliti, 'twister');
+        end
+
         trainYShuffleByTime = cell(nTime, 1);
         for ti = 1:nTime
             trainYShuffleByTime{ti} = trainY(randperm(numel(trainY)));
         end
     else
+        AccShuffle_split = [];
+        AUCShuffle_split = [];
         trainYShuffleByTime = cell(nTime, 1);
     end
 
     for trainTime = 1:nTime
-        [accRow, aucRow, trainAccVal, weightVec, accShufRow, aucShufRow] = decode_one_time( ...
-            allTrials, trainIdx, testIdx, trainY, testY, trainYShuffleByTime{trainTime}, ...
-            trainTime, nTime, nCh, cfg);
-
-        Acc_iter(trainTime,:,spliti) = accRow;
-        trainAcc_iter(spliti,trainTime) = trainAccVal;
-        weights_iter(:,trainTime,spliti) = weightVec;
-
+        accRow = nan(1, nTime);
+        accShufRow = nan(1, nTime);
         if cfg.useAUC
-            AUC_iter(trainTime,:,spliti) = aucRow;
+            aucRow = nan(1, nTime);
+            aucShufRow = nan(1, nTime);
+        else
+            aucRow = [];
+            aucShufRow = [];
         end
+
+        weightVec = nan(nCh, 1);
+        Xtrain = squeeze(allTrials(:, trainTime, trainIdx))';
+        if isvector(Xtrain), Xtrain = reshape(Xtrain, sum(trainIdx), nCh); end
+
+        mu_z = [];
+        sigma_z = [];
+        if cfg.standardize
+            mu_z = mean(Xtrain, 1, 'omitnan');
+            sigma_z = std(Xtrain, 0, 1, 'omitnan');
+            sigma_z(sigma_z == 0 | isnan(sigma_z)) = 1;
+            Xtrain = (Xtrain - mu_z) ./ sigma_z;
+        end
+
+        coeff = [];
+        mu_pca = [];
+        if cfg.doPCA
+            maxPC = min([size(Xtrain,1)-1, size(Xtrain,2), cfg.nPCs]);
+            [coeff, score, ~, ~, ~, mu_pca] = pca(Xtrain);
+            coeff = coeff(:,1:maxPC);
+            Xtrain = score(:,1:maxPC);
+        end
+
+        args = {'KernelFunction', cfg.kernelFunction, ...
+                'Standardize', false, ...
+                'BoxConstraint', cfg.boxConstraint};
+        if ~isempty(cfg.kernelScale), args = [args, {'KernelScale', cfg.kernelScale}]; end %#ok<AGROW>
+        if ~isempty(cfg.solver), args = [args, {'Solver', cfg.solver}]; end %#ok<AGROW>
+        if ~isempty(cfg.scoreTransform), args = [args, {'ScoreTransform', cfg.scoreTransform}]; end %#ok<AGROW>
+
+        score = [];
+        scoreShuf = [];
+        svmModelShuffle = [];
+        svmModel = fitcsvm(Xtrain, trainY, args{:});
         if cfg.doShuffle
-            AccShuffle_iter(trainTime,:,spliti) = accShufRow;
+            svmModelShuffle = fitcsvm(Xtrain, trainYShuffleByTime{trainTime}, args{:});
+        end
+
+        if strcmpi(cfg.kernelFunction, 'linear') && isprop(svmModel, 'Beta') && ~isempty(svmModel.Beta)
+            w_use = svmModel.Beta;
+            if cfg.doPCA, w_use = coeff * w_use; end
+            if cfg.standardize, w_use = w_use ./ sigma_z(:); end
+            weightVec = w_use;
+        end
+
+        labelTrain = predict(svmModel, Xtrain);
+        trainAccVal = mean(labelTrain == trainY);
+
+        if cfg.doTimeGeneralization
+            testTimes = 1:nTime;
+        else
+            testTimes = trainTime;
+        end
+
+        for testTime = testTimes
+            Xtest = squeeze(allTrials(:, testTime, testIdx))';
+            if isvector(Xtest), Xtest = reshape(Xtest, sum(testIdx), nCh); end
+            if cfg.standardize, Xtest = (Xtest - mu_z) ./ sigma_z; end
+            if cfg.doPCA, Xtest = (Xtest - mu_pca) * coeff; end
+
             if cfg.useAUC
-                AUCShuffle_iter(trainTime,:,spliti) = aucShufRow;
+                [labelTest, score] = predict(svmModel, Xtest);
+            else
+                labelTest = predict(svmModel, Xtest);
+            end
+            accRow(testTime) = mean(labelTest == testY);
+
+            if cfg.useAUC
+                aucVal = NaN;
+                posCol = find(svmModel.ClassNames == 2, 1);
+                if ~isempty(posCol) && size(score,2) >= posCol && numel(unique(testY)) == 2
+                    [~,~,~,aucVal] = perfcurve(testY, score(:,posCol), 2);
+                end
+                aucRow(testTime) = aucVal;
+            end
+
+            if cfg.doShuffle
+                if cfg.useAUC
+                    [labelShuf, scoreShuf] = predict(svmModelShuffle, Xtest);
+                else
+                    labelShuf = predict(svmModelShuffle, Xtest);
+                end
+                accShufRow(testTime) = mean(labelShuf == testY);
+
+                if cfg.useAUC
+                    aucVal = NaN;
+                    posCol = find(svmModelShuffle.ClassNames == 2, 1);
+                    if ~isempty(posCol) && size(scoreShuf,2) >= posCol && numel(unique(testY)) == 2
+                        [~,~,~,aucVal] = perfcurve(testY, scoreShuf(:,posCol), 2);
+                    end
+                    aucShufRow(testTime) = aucVal;
+                end
             end
         end
-    end
-end
 
-end
-
-%% ========================================================================
-function [trainIdxList, testIdxList] = make_cv_splits(y, cfg)
-
-if strcmpi(cfg.cvType, 'holdout')
-    CVO = cvpartition(y, 'HoldOut', 1 - cfg.trainRatio);
-    trainIdxList = {training(CVO)};
-    testIdxList  = {test(CVO)};
-else
-    CVO = cvpartition(y, 'KFold', cfg.nFolds);
-    trainIdxList = cell(cfg.nFolds, 1);
-    testIdxList  = cell(cfg.nFolds, 1);
-    for fi = 1:cfg.nFolds
-        trainIdxList{fi} = training(CVO, fi);
-        testIdxList{fi}  = test(CVO, fi);
-    end
-end
-
-end
-
-%% ========================================================================
-function [accRow, aucRow, trainAccVal, weightVec, accShufRow, aucShufRow] = decode_one_time( ...
-    allTrials, trainIdx, testIdx, trainY, testY, trainYShuffle, trainTime, nTime, nCh, cfg)
-
-accRow = nan(1, nTime);
-accShufRow = nan(1, nTime);
-
-if cfg.useAUC
-    aucRow = nan(1, nTime);
-    aucShufRow = nan(1, nTime);
-else
-    aucRow = [];
-    aucShufRow = [];
-end
-
-weightVec = nan(nCh, 1);
-
-Xtrain = squeeze(allTrials(:, trainTime, trainIdx))';
-if isvector(Xtrain), Xtrain = reshape(Xtrain, sum(trainIdx), nCh); end
-
-mu_z = [];
-sigma_z = [];
-if cfg.standardize
-    [Xtrain, mu_z, sigma_z] = zscore_train_only(Xtrain);
-end
-
-coeff = [];
-mu_pca = [];
-if cfg.doPCA
-    [coeff, Xtrain, mu_pca] = fit_pca_train_only(Xtrain, cfg.nPCs);
-end
-
-svmModel = fit_svm_model(Xtrain, trainY, cfg);
-if cfg.doShuffle
-    svmModelShuffle = fit_svm_model(Xtrain, trainYShuffle, cfg);
-end
-
-% Linear SVM weights in original channel space.
-if strcmpi(cfg.kernelFunction, 'linear') && isprop(svmModel, 'Beta') && ~isempty(svmModel.Beta)
-    w_use = svmModel.Beta;
-    if cfg.doPCA, w_use = coeff * w_use; end
-    if cfg.standardize, w_use = w_use ./ sigma_z(:); end
-    weightVec = w_use;
-end
-
-labelTrain = predict(svmModel, Xtrain);
-trainAccVal = mean(labelTrain == trainY);
-
-if cfg.doTimeGeneralization
-    testTimes = 1:nTime;
-else
-    testTimes = trainTime;
-end
-
-for testTime = testTimes
-    Xtest = squeeze(allTrials(:, testTime, testIdx))';
-    if isvector(Xtest), Xtest = reshape(Xtest, sum(testIdx), nCh); end
-    if cfg.standardize, Xtest = (Xtest - mu_z) ./ sigma_z; end
-    if cfg.doPCA, Xtest = (Xtest - mu_pca) * coeff; end
-
-    if cfg.useAUC
-        [labelTest, score] = predict(svmModel, Xtest);
-    else
-        labelTest = predict(svmModel, Xtest);
-    end
-    accRow(testTime) = mean(labelTest == testY);
-
-    if cfg.useAUC
-        aucRow(testTime) = binary_auc(testY, score, svmModel.ClassNames, 2);
+        Acc_split(trainTime,:) = accRow;
+        trainAcc_split(trainTime) = trainAccVal;
+        weights_split(:,trainTime) = weightVec;
+        if cfg.useAUC, AUC_split(trainTime,:) = aucRow; end
+        if cfg.doShuffle
+            AccShuffle_split(trainTime,:) = accShufRow;
+            if cfg.useAUC, AUCShuffle_split(trainTime,:) = aucShufRow; end
+        end
     end
 
+    Acc_iter(:,:,spliti) = Acc_split;
+    trainAcc_iter(spliti,:) = trainAcc_split;
+    weights_iter(:,:,spliti) = weights_split;
+    if cfg.useAUC, AUC_iter(:,:,spliti) = AUC_split; end
     if cfg.doShuffle
-        if cfg.useAUC
-            [labelShuf, scoreShuf] = predict(svmModelShuffle, Xtest);
-        else
-            labelShuf = predict(svmModelShuffle, Xtest);
-        end
-        accShufRow(testTime) = mean(labelShuf == testY);
-
-        if cfg.useAUC
-            aucShufRow(testTime) = binary_auc(testY, scoreShuf, svmModelShuffle.ClassNames, 2);
-        end
+        AccShuffle_iter(:,:,spliti) = AccShuffle_split;
+        if cfg.useAUC, AUCShuffle_iter(:,:,spliti) = AUCShuffle_split; end
     end
 end
-
-end
-
-%% ========================================================================
-function svmModel = fit_svm_model(Xtrain, trainY, cfg)
-
-args = {'KernelFunction', cfg.kernelFunction, ...
-        'Standardize', false, ...
-        'BoxConstraint', cfg.boxConstraint};
-
-if ~isempty(cfg.kernelScale)
-    args = [args, {'KernelScale', cfg.kernelScale}];
-end
-if ~isempty(cfg.solver)
-    args = [args, {'Solver', cfg.solver}];
-end
-if ~isempty(cfg.scoreTransform)
-    args = [args, {'ScoreTransform', cfg.scoreTransform}];
-end
-
-svmModel = fitcsvm(Xtrain, trainY, args{:});
-
-end
-
-%% ========================================================================
-function [eegOut, timesOut] = apply_temporal_window(eegData, times, win, step, modeName)
-
-if isempty(step), step = win; end
-
-if strcmpi(modeName, 'bin')
-    binStarts = times(1):step:(times(end)-win);
-    eegOut = zeros(size(eegData,1), numel(binStarts), size(eegData,3), 'like', eegData);
-    timesOut = binStarts + win/2;
-
-    for bi = 1:numel(binStarts)
-        t1 = binStarts(bi);
-        t2 = t1 + win;
-        if bi < numel(binStarts)
-            tidx = times >= t1 & times < t2;
-        else
-            tidx = times >= t1 & times <= t2;
-        end
-        eegOut(:,bi,:) = mean(eegData(:,tidx,:), 2, 'omitnan');
-    end
-else
-    if win > 0
-        halfWin = win/2;
-        centerIdx = find(times >= times(1)+halfWin & times <= times(end)-halfWin);
-    else
-        centerIdx = 1:numel(times);
-    end
-
-    if ~isempty(step)
-        targetTimes = times(centerIdx(1)):step:times(centerIdx(end));
-        tmp = nan(size(targetTimes));
-        for ii = 1:numel(targetTimes)
-            [~,k] = min(abs(times(centerIdx)-targetTimes(ii)));
-            tmp(ii) = centerIdx(k);
-        end
-        centerIdx = unique(tmp, 'stable');
-    end
-
-    eegOut = zeros(size(eegData,1), numel(centerIdx), size(eegData,3), 'like', eegData);
-    timesOut = times(centerIdx);
-
-    for ii = 1:numel(centerIdx)
-        ct = times(centerIdx(ii));
-        if win > 0
-            tidx = times >= ct-win/2 & times <= ct+win/2;
-        else
-            tidx = centerIdx(ii);
-        end
-        eegOut(:,ii,:) = mean(eegData(:,tidx,:), 2, 'omitnan');
-    end
-end
-
-end
-
-%% ========================================================================
-function [Xz, mu_z, sigma_z] = zscore_train_only(X)
-
-mu_z = mean(X, 1, 'omitnan');
-sigma_z = std(X, 0, 1, 'omitnan');
-sigma_z(sigma_z == 0 | isnan(sigma_z)) = 1;
-Xz = (X - mu_z) ./ sigma_z;
-
-end
-
-%% ========================================================================
-function [coeff, score, mu] = fit_pca_train_only(X, nPCs)
-
-maxPC = min([size(X,1)-1, size(X,2), nPCs]);
-[coeff, score, ~, ~, ~, mu] = pca(X);
-coeff = coeff(:,1:maxPC);
-score = score(:,1:maxPC);
-
-end
-
-%% ========================================================================
-function aucVal = binary_auc(testY, score, classNames, posClass)
-
-aucVal = NaN;
-posCol = find(classNames == posClass, 1);
-if ~isempty(posCol) && size(score,2) >= posCol && numel(unique(testY)) == 2
-    [~,~,~,aucVal] = perfcurve(testY, score(:,posCol), posClass);
-end
-
-end
-
-%% ========================================================================
-function M = keep_diagonal_only(M)
-
-d = diag(M);
-M(:) = NaN;
-M(1:size(M,1)+1:end) = d;
 
 end

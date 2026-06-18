@@ -40,6 +40,13 @@ for s = 1:numel(subjects)
     cda0 = source.cda;
     cda = rebuilt.cda;
 
+    [includeSubject, inclusionInfo] = data1_subject_inclusion(cda);
+    if ~includeSubject
+        fprintf('Skip subject %s: original data1 criterion failed, min trials per condition = %d.\n', ...
+            subj, inclusionInfo.minTrialCount);
+        continue;
+    end
+
     timeIdx = cda.time >= cda0.time(1) & cda.time <= cda0.time(end);
     if isempty(plotTime)
         plotTime = cda.time(timeIdx);

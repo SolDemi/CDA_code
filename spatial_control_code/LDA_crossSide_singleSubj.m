@@ -5,19 +5,41 @@ function result = LDA_crossSide_singleSubj(trainData, trainLabels, testData, tes
 % Data format:
 %   trainData/testData: channels x time x trials
 %   labels            : binary labels, e.g., 1 = low load, 2 = high load
-%
-% Main output:
-%   result.Acc: train-time x test-time accuracy
-%               If cfg.doTimeGeneralization = false, only the diagonal is filled.
 
 if nargin < 6 || isempty(cfg), cfg = struct(); end
-cfg = set_default_cfg(cfg);
+
+% Backward-compatible aliases.
+if isfield(cfg, 'avgNTrials') && ~isfield(cfg, 'superTrial'), cfg.superTrial = cfg.avgNTrials; end
+if isfield(cfg, 'binSize') && ~isfield(cfg, 'smooth_window'), cfg.smooth_window = cfg.binSize; end
+if isfield(cfg, 'seed') && ~isfield(cfg, 'randomSeed'), cfg.randomSeed = cfg.seed; end
+if isfield(cfg, 'zscore') && ~isfield(cfg, 'standardize'), cfg.standardize = cfg.zscore; end
+
+if ~isfield(cfg, 'superTrial'), cfg.superTrial = 1; end
+if ~isfield(cfg, 'nIter'), cfg.nIter = 1; end
+if ~isfield(cfg, 'balanceTrials'), cfg.balanceTrials = true; end
+if ~isfield(cfg, 'balanceNPerCell'), cfg.balanceNPerCell = []; end
+if ~isfield(cfg, 'doTimeGeneralization'), cfg.doTimeGeneralization = true; end
+if ~isfield(cfg, 'discrimType'), cfg.discrimType = 'diaglinear'; end
+if ~isfield(cfg, 'prior'), cfg.prior = 'uniform'; end
+if ~isfield(cfg, 'standardize'), cfg.standardize = false; end
+if ~isfield(cfg, 'doPCA'), cfg.doPCA = false; end
+if ~isfield(cfg, 'nPCs'), cfg.nPCs = 5; end
+if ~isfield(cfg, 'smooth_window'), cfg.smooth_window = 0; end
+if ~isfield(cfg, 'smooth_step'), cfg.smooth_step = []; end
+if ~isfield(cfg, 'timeWindowMode'), cfg.timeWindowMode = 'centered'; end
+if ~isfield(cfg, 'doShuffle'), cfg.doShuffle = false; end
+if ~isfield(cfg, 'useAUC'), cfg.useAUC = false; end
+if ~isfield(cfg, 'saveWeights'), cfg.saveWeights = false; end
+if ~isfield(cfg, 'randomSeed'), cfg.randomSeed = []; end
+if ~isfield(cfg, 'verbose'), cfg.verbose = true; end
+
+cfg.discrimType = lower(char(cfg.discrimType));
+cfg.timeWindowMode = lower(char(cfg.timeWindowMode));
 
 trainLabels = trainLabels(:);
 testLabels  = testLabels(:);
 times       = times(:)';
 
-% Core dimension checks
 if ndims(trainData) ~= 3 || ndims(testData) ~= 3
     error('trainData and testData must be channels x time x trials.');
 end
@@ -40,15 +62,87 @@ if ~isempty(cfg.randomSeed)
     rng(cfg.randomSeed, 'twister');
 end
 
-% Relabel to 1/2 internally, while keeping original labels in the output.
 trainY0 = 1 + double(trainLabels == classLabels(2));
 testY0  = 1 + double(testLabels  == classLabels(2));
 
+%% Optional temporal binning/smoothing
 origTimes = times;
-[trainData, times] = apply_temporal_window(trainData, origTimes, cfg.smooth_window, ...
-    cfg.smooth_step, cfg.timeWindowMode);
-[testData,  ~] = apply_temporal_window(testData,  origTimes, cfg.smooth_window, ...
-    cfg.smooth_step, cfg.timeWindowMode);
+dataInput = {trainData, testData};
+dataOutput = cell(1, 2);
+for dataIdx = 1:2
+    thisData = dataInput{dataIdx};
+    step = cfg.smooth_step;
+    if isempty(step)
+        if cfg.smooth_window > 0
+            step = cfg.smooth_window;
+        else
+            step = [];
+        end
+    end
+
+    if cfg.smooth_window <= 0 && isempty(step)
+        thisOut = thisData;
+        thisTimes = origTimes;
+    elseif strcmpi(cfg.timeWindowMode, 'bin')
+        binStarts = origTimes(1):step:(origTimes(end) - cfg.smooth_window);
+        thisOut = zeros(size(thisData,1), numel(binStarts), size(thisData,3), 'like', thisData);
+        thisTimes = binStarts + cfg.smooth_window / 2;
+
+        for bi = 1:numel(binStarts)
+            t1 = binStarts(bi);
+            t2 = t1 + cfg.smooth_window;
+
+            if bi < numel(binStarts)
+                tidx = origTimes >= t1 & origTimes < t2;
+            else
+                tidx = origTimes >= t1 & origTimes <= t2;
+            end
+
+            thisOut(:, bi, :) = mean(thisData(:, tidx, :), 2, 'omitnan');
+        end
+    else
+        if cfg.smooth_window > 0
+            centerIdx = find(origTimes >= origTimes(1) + cfg.smooth_window/2 & ...
+                origTimes <= origTimes(end) - cfg.smooth_window/2);
+        else
+            centerIdx = 1:numel(origTimes);
+        end
+
+        if ~isempty(step) && step > 0
+            targetTimes = origTimes(centerIdx(1)):step:origTimes(centerIdx(end));
+            newIdx = nan(size(targetTimes));
+
+            for ii = 1:numel(targetTimes)
+                [~, k] = min(abs(origTimes(centerIdx) - targetTimes(ii)));
+                newIdx(ii) = centerIdx(k);
+            end
+
+            centerIdx = unique(newIdx, 'stable');
+        end
+
+        thisOut = zeros(size(thisData,1), numel(centerIdx), size(thisData,3), 'like', thisData);
+        thisTimes = origTimes(centerIdx);
+
+        for ii = 1:numel(centerIdx)
+            ct = origTimes(centerIdx(ii));
+
+            if cfg.smooth_window > 0
+                tidx = origTimes >= ct - cfg.smooth_window/2 & origTimes <= ct + cfg.smooth_window/2;
+            else
+                tidx = centerIdx(ii);
+            end
+
+            thisOut(:, ii, :) = mean(thisData(:, tidx, :), 2, 'omitnan');
+        end
+    end
+
+    dataOutput{dataIdx} = thisOut;
+    if dataIdx == 1
+        times = thisTimes;
+    end
+end
+trainData = dataOutput{1};
+testData = dataOutput{2};
 
 [nCh, nTime, ~] = size(trainData);
 
@@ -86,12 +180,72 @@ for iter = 1:cfg.nIter
         rng(cfg.randomSeed + iter - 1, 'twister');
     end
 
-    [trDat, trY, infoTrain] = prepare_trials(trainData, trainY0, cfg);
-    [teDat, teY, infoTest]  = prepare_trials(testData,  testY0,  cfg);
-    balanceInfo{iter} = struct('train', infoTrain, 'test', infoTest);
+    iterDataInput = {trainData, testData};
+    iterLabelsInput = {trainY0, testY0};
+    iterDataOutput = cell(1, 2);
+    iterLabelsOutput = cell(1, 2);
+    iterInfo = cell(1, 2);
+
+    for dataIdx = 1:2
+        thisData = iterDataInput{dataIdx};
+        thisLabels = iterLabelsInput{dataIdx};
+        idx1 = find(thisLabels == 1);
+        idx2 = find(thisLabels == 2);
+
+        info = struct();
+        info.nOriginal = [numel(idx1), numel(idx2)];
+
+        if cfg.balanceTrials
+            n = min(info.nOriginal);
+            if ~isempty(cfg.balanceNPerCell)
+                n = min(n, cfg.balanceNPerCell);
+            end
+            if cfg.superTrial > 1
+                n = floor(n / cfg.superTrial) * cfg.superTrial;
+            end
+
+            idx1 = idx1(randperm(numel(idx1), n));
+            idx2 = idx2(randperm(numel(idx2), n));
+        elseif cfg.superTrial > 1
+            n1 = floor(numel(idx1) / cfg.superTrial) * cfg.superTrial;
+            n2 = floor(numel(idx2) / cfg.superTrial) * cfg.superTrial;
+            idx1 = idx1(randperm(numel(idx1), n1));
+            idx2 = idx2(randperm(numel(idx2), n2));
+        end
+
+        info.idxKeep = [idx1(:); idx2(:)];
+        info.nAfterBalance = [numel(idx1), numel(idx2)];
+
+        data1 = thisData(:, :, idx1);
+        data2 = thisData(:, :, idx2);
+
+        if cfg.superTrial > 1
+            data1 = func_make_superTrials(data1, cfg.superTrial);
+            data2 = func_make_superTrials(data2, cfg.superTrial);
+        end
+
+        thisData = cat(3, data1, data2);
+        thisLabels = [ones(size(data1,3),1); 2 * ones(size(data2,3),1)];
+
+        ord = randperm(numel(thisLabels));
+        thisData = thisData(:, :, ord);
+        thisLabels = thisLabels(ord);
+
+        info.nAfterSuperTrial = [sum(thisLabels == 1), sum(thisLabels == 2)];
+        iterDataOutput{dataIdx} = thisData;
+        iterLabelsOutput{dataIdx} = thisLabels;
+        iterInfo{dataIdx} = info;
+    end
+
+    trDat = iterDataOutput{1};
+    trY = iterLabelsOutput{1};
+    teDat = iterDataOutput{2};
+    teY = iterLabelsOutput{2};
+    balanceInfo{iter} = struct('train', iterInfo{1}, 'test', iterInfo{2});
 
     for trainTime = 1:nTime
-        Xtrain = get_time_data(trDat, trainTime);
+        Xtrain = permute(trDat(:, trainTime, :), [3 1 2]);
+        Xtrain = reshape(Xtrain, [], nCh);
 
         if cfg.standardize
             mu_z = mean(Xtrain, 1, 'omitnan');
@@ -145,7 +299,8 @@ for iter = 1:cfg.nIter
         end
 
         for testTime = testTimes
-            Xtest = get_time_data(teDat, testTime);
+            Xtest = permute(teDat(:, testTime, :), [3 1 2]);
+            Xtest = reshape(Xtest, [], nCh);
 
             if cfg.standardize
                 Xtest = (Xtest - mu_z) ./ sd_z;
@@ -156,7 +311,12 @@ for iter = 1:cfg.nIter
 
             if cfg.useAUC
                 [pred, score] = predict(ldaModel, Xtest);
-                AUC_all(trainTime, testTime, iter) = get_binary_auc(teY, score, ldaModel.ClassNames, 2);
+                aucVal = NaN;
+                posCol = find(ldaModel.ClassNames == 2, 1);
+                if ~isempty(posCol) && numel(unique(teY)) == 2
+                    [~, ~, ~, aucVal] = perfcurve(teY, score(:, posCol), 2);
+                end
+                AUC_all(trainTime, testTime, iter) = aucVal;
             else
                 pred = predict(ldaModel, Xtest);
             end
@@ -165,7 +325,12 @@ for iter = 1:cfg.nIter
             if cfg.doShuffle
                 if cfg.useAUC
                     [predShuf, scoreShuf] = predict(ldaShuffle, Xtest);
-                    AUCShuffle_all(trainTime, testTime, iter) = get_binary_auc(teY, scoreShuf, ldaShuffle.ClassNames, 2);
+                    aucVal = NaN;
+                    posCol = find(ldaShuffle.ClassNames == 2, 1);
+                    if ~isempty(posCol) && numel(unique(teY)) == 2
+                        [~, ~, ~, aucVal] = perfcurve(teY, scoreShuf(:, posCol), 2);
+                    end
+                    AUCShuffle_all(trainTime, testTime, iter) = aucVal;
                 else
                     predShuf = predict(ldaShuffle, Xtest);
                 end
@@ -203,195 +368,6 @@ if cfg.doShuffle
         result.AUCShuffle = mean(AUCShuffle_all, 3, 'omitnan');
         result.AUCMinusShuffle = result.AUC - result.AUCShuffle;
     end
-end
-
-end
-
-%% ========================================================================
-function cfg = set_default_cfg(cfg)
-
-% Backward-compatible aliases
-if isfield(cfg, 'avgNTrials') && ~isfield(cfg, 'superTrial')
-    cfg.superTrial = cfg.avgNTrials;
-end
-if isfield(cfg, 'binSize') && ~isfield(cfg, 'smooth_window')
-    cfg.smooth_window = cfg.binSize;
-end
-if isfield(cfg, 'seed') && ~isfield(cfg, 'randomSeed')
-    cfg.randomSeed = cfg.seed;
-end
-if isfield(cfg, 'zscore') && ~isfield(cfg, 'standardize')
-    cfg.standardize = cfg.zscore;
-end
-
-if ~isfield(cfg, 'superTrial'), cfg.superTrial = 1; end
-if ~isfield(cfg, 'nIter'), cfg.nIter = 1; end
-if ~isfield(cfg, 'balanceTrials'), cfg.balanceTrials = true; end
-if ~isfield(cfg, 'balanceNPerCell'), cfg.balanceNPerCell = []; end
-
-if ~isfield(cfg, 'doTimeGeneralization'), cfg.doTimeGeneralization = true; end
-if ~isfield(cfg, 'discrimType'), cfg.discrimType = 'diaglinear'; end
-if ~isfield(cfg, 'prior'), cfg.prior = 'uniform'; end
-
-if ~isfield(cfg, 'standardize'), cfg.standardize = false; end
-if ~isfield(cfg, 'doPCA'), cfg.doPCA = false; end
-if ~isfield(cfg, 'nPCs'), cfg.nPCs = 5; end
-
-if ~isfield(cfg, 'smooth_window'), cfg.smooth_window = 0; end
-if ~isfield(cfg, 'smooth_step'), cfg.smooth_step = []; end
-if ~isfield(cfg, 'timeWindowMode'), cfg.timeWindowMode = 'centered'; end
-
-if ~isfield(cfg, 'doShuffle'), cfg.doShuffle = false; end
-if ~isfield(cfg, 'useAUC'), cfg.useAUC = false; end
-if ~isfield(cfg, 'saveWeights'), cfg.saveWeights = false; end
-
-if ~isfield(cfg, 'randomSeed'), cfg.randomSeed = []; end
-if ~isfield(cfg, 'verbose'), cfg.verbose = true; end
-
-cfg.discrimType = lower(char(cfg.discrimType));
-cfg.timeWindowMode = lower(char(cfg.timeWindowMode));
-
-end
-
-%% ========================================================================
-function [dataOut, labelsOut, info] = prepare_trials(data, labels, cfg)
-
-idx1 = find(labels == 1);
-idx2 = find(labels == 2);
-
-info = struct();
-info.nOriginal = [numel(idx1), numel(idx2)];
-
-if cfg.balanceTrials
-    n = min(info.nOriginal);
-    if ~isempty(cfg.balanceNPerCell)
-        n = min(n, cfg.balanceNPerCell);
-    end
-    if cfg.superTrial > 1
-        n = floor(n / cfg.superTrial) * cfg.superTrial;
-    end
-
-    idx1 = idx1(randperm(numel(idx1), n));
-    idx2 = idx2(randperm(numel(idx2), n));
-
-elseif cfg.superTrial > 1
-    n1 = floor(numel(idx1) / cfg.superTrial) * cfg.superTrial;
-    n2 = floor(numel(idx2) / cfg.superTrial) * cfg.superTrial;
-    idx1 = idx1(randperm(numel(idx1), n1));
-    idx2 = idx2(randperm(numel(idx2), n2));
-end
-
-info.idxKeep = [idx1(:); idx2(:)];
-info.nAfterBalance = [numel(idx1), numel(idx2)];
-
-data1 = data(:, :, idx1);
-data2 = data(:, :, idx2);
-
-if cfg.superTrial > 1
-    data1 = func_make_superTrials(data1, cfg.superTrial);
-    data2 = func_make_superTrials(data2, cfg.superTrial);
-end
-
-dataOut = cat(3, data1, data2);
-labelsOut = [ones(size(data1,3),1); 2 * ones(size(data2,3),1)];
-
-ord = randperm(numel(labelsOut));
-dataOut = dataOut(:, :, ord);
-labelsOut = labelsOut(ord);
-
-info.nAfterSuperTrial = [sum(labelsOut == 1), sum(labelsOut == 2)];
-
-end
-
-%% ========================================================================
-function X = get_time_data(data, t)
-
-nCh = size(data, 1);
-X = permute(data(:, t, :), [3 1 2]);
-X = reshape(X, [], nCh);
-
-end
-
-%% ========================================================================
-function aucVal = get_binary_auc(y, score, classNames, posClass)
-
-aucVal = NaN;
-posCol = find(classNames == posClass, 1);
-
-if ~isempty(posCol) && numel(unique(y)) == 2
-    [~, ~, ~, aucVal] = perfcurve(y, score(:, posCol), posClass);
-end
-
-end
-
-%% ========================================================================
-function [dataOut, timesOut] = apply_temporal_window(data, times, win, step, modeName)
-
-if isempty(step)
-    if win > 0
-        step = win;
-    else
-        step = [];
-    end
-end
-
-if win <= 0 && isempty(step)
-    dataOut = data;
-    timesOut = times;
-    return;
-end
-
-if strcmpi(modeName, 'bin')
-    binStarts = times(1):step:(times(end) - win);
-    dataOut = zeros(size(data,1), numel(binStarts), size(data,3), 'like', data);
-    timesOut = binStarts + win / 2;
-
-    for i = 1:numel(binStarts)
-        t1 = binStarts(i);
-        t2 = t1 + win;
-
-        if i < numel(binStarts)
-            tidx = times >= t1 & times < t2;
-        else
-            tidx = times >= t1 & times <= t2;
-        end
-
-        dataOut(:, i, :) = mean(data(:, tidx, :), 2, 'omitnan');
-    end
-    return;
-end
-
-if win > 0
-    centerIdx = find(times >= times(1) + win/2 & times <= times(end) - win/2);
-else
-    centerIdx = 1:numel(times);
-end
-
-if ~isempty(step) && step > 0
-    targetTimes = times(centerIdx(1)):step:times(centerIdx(end));
-    newIdx = nan(size(targetTimes));
-
-    for i = 1:numel(targetTimes)
-        [~, k] = min(abs(times(centerIdx) - targetTimes(i)));
-        newIdx(i) = centerIdx(k);
-    end
-
-    centerIdx = unique(newIdx, 'stable');
-end
-
-dataOut = zeros(size(data,1), numel(centerIdx), size(data,3), 'like', data);
-timesOut = times(centerIdx);
-
-for i = 1:numel(centerIdx)
-    ct = times(centerIdx(i));
-
-    if win > 0
-        tidx = times >= ct - win/2 & times <= ct + win/2;
-    else
-        tidx = centerIdx(i);
-    end
-
-    dataOut(:, i, :) = mean(data(:, tidx, :), 2, 'omitnan');
 end
 
 end

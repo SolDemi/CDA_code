@@ -19,6 +19,10 @@ loadCfg = struct();
 loadCfg.metric = 'AUC';
 loadCfg.useDiagonal = true;
 loadCfg.filePattern = '*.mat';
+[loadCfg.includeSubjectIds, subjectInclusion] = data1_decoding_subjects( ...
+    fullfile(projectRoot, 'data1', 'cda_alpha'), 160);
+loadCfg.excludeSubjectIds = [];
+fprintf('Subject inclusion for data1 SVM plot: n = %d\n', numel(loadCfg.includeSubjectIds));
 
 stats = struct();
 validModels = {};
@@ -100,4 +104,4 @@ end
 Summary = cell2table(rows, 'VariableNames', ...
     {'Model', 'N', 'MeanAUC', 'SEM', 'P_right_vs_0p5', 'CohenDz'});
 writetable(Summary, fullfile(saveDir, 'SVM_AUC_maintenance_summary.csv'));
-save(fullfile(saveDir, 'SVM_AUC_group_stats.mat'), 'stats', 'Summary', 'time', 'loadCfg');
+save(fullfile(saveDir, 'SVM_AUC_group_stats.mat'), 'stats', 'Summary', 'time', 'loadCfg', 'subjectInclusion');

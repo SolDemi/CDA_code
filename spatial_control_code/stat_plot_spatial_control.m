@@ -19,6 +19,11 @@ if ~isfolder(figdir), mkdir(figdir); end
 metricCfg = struct();
 metricCfg.metric = 'AccMinusShuffle';
 metricCfg.useDiagonal = true;
+[metricCfg.includeSubjectIds, subjectInclusion] = data0_decoding_subjects( ...
+    fullfile(maindir, 'data'), 75);
+metricCfg.excludeSubjectIds = [];
+fprintf('Subject inclusion for data0 spatial-control stats: n = %d\n', ...
+    numel(metricCfg.includeSubjectIds));
 
 statCfg = struct();
 statCfg.null = 0;
@@ -42,40 +47,12 @@ sideFeatures = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 
 loadFeatures = {'CDA', 'Alpha', 'GlobalAlpha', 'GlobalAlphaMean', 'NoPCA', 'PCA'};
 
 allStats = struct();
-allStats.sideDecoding      = plot_feature_grid(rootdir, 'sideDecoding',      sideFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadWithinSide    = plot_feature_grid(rootdir, 'loadWithinSide',    loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadSideBalanced  = plot_feature_grid(rootdir, 'loadSideBalanced',  loadFeatures, metricCfg, statCfg, plotCfg, figdir);
-allStats.loadCrossSide     = plot_feature_grid(rootdir, 'loadCrossSide',     loadFeatures, metricCfg, statCfg, plotCfg, figdir);
+analysisList = {'sideDecoding', 'loadWithinSide', 'loadSideBalanced', 'loadCrossSide'};
+featureList = {sideFeatures, loadFeatures, loadFeatures, loadFeatures};
 
-%% Maintenance-period summary: side evidence vs controlled load evidence
-summaryCfg = struct();
-summaryCfg.timeWin = [250 inf];   % edit this to your preferred maintenance window
-summaryCfg.sideAnalysis = 'sideDecoding';
-summaryCfg.loadAnalysis = 'loadSideBalanced';
-summaryCfg.metricCfg = metricCfg;
-
-summaryMap = struct();
-summaryMap(1).label = 'CDA / voltage lateralization';
-summaryMap(1).sideFeature = 'VoltageLminusR';
-summaryMap(1).loadFeature = 'CDA';
-summaryMap(2).label = 'Lateralized alpha';
-summaryMap(2).sideFeature = 'AlphaLminusR';
-summaryMap(2).loadFeature = 'Alpha';
-summaryMap(3).label = 'Global alpha mean';
-summaryMap(3).sideFeature = 'GlobalAlphaMean';
-summaryMap(3).loadFeature = 'GlobalAlphaMean';
-summaryMap(4).label = 'Global alpha topography';
-summaryMap(4).sideFeature = 'AlphaRawLR';
-summaryMap(4).loadFeature = 'GlobalAlpha';
-
-summaryTable = plot_selectivity_summary(rootdir, summaryMap, summaryCfg, figdir);
-save(fullfile(figdir, 'spatial_control_group_stats.mat'), 'allStats', 'summaryTable');
-
-%% ========================================================================
-% local functions
-% ========================================================================
-
-function statsOut = plot_feature_grid(rootdir, analysisName, features, metricCfg, statCfg, plotCfg, figdir)
+for analysisIdx = 1:numel(analysisList)
+    analysisName = analysisList{analysisIdx};
+    features = featureList{analysisIdx};
     nFeat = numel(features);
     nCol = 3;
     nRow = ceil(nFeat / nCol);
@@ -99,86 +76,104 @@ function statsOut = plot_feature_grid(rootdir, analysisName, features, metricCfg
         statsOut.(featName).stat = stat;
         statsOut.(featName).files = usedFiles;
 
-        plot_one_panel(stat, plotCfg, featName);
+        x = stat.times;
+        y = stat.mean;
+        e = stat.sem;
+
+        patch([x, fliplr(x)], [y+e, fliplr(y-e)], [0.5 0.5 0.5], ...
+            'FaceAlpha', 0.2, 'EdgeColor', 'none');
+        plot(x, y, 'k', 'LineWidth', 2);
+        yline(0, ':k');
+
+        for li = 1:numel(plotCfg.eventLines)
+            xline(plotCfg.eventLines(li), '--k');
+        end
+
+        yl = ylim;
+        yBar = yl(1) + 0.05 * range(yl);
+        for ci = 1:numel(stat.significantClusters)
+            idx = stat.significantClusters(ci).idx;
+            plot(x(idx), yBar * ones(size(idx)), 'k-', 'LineWidth', 4);
+        end
+
+        title(featName, 'Interpreter', 'none');
+        xlabel('Time (ms)');
+        ylabel(plotCfg.ylabel);
+        if ~isempty(plotCfg.xlim), xlim(plotCfg.xlim); end
+        if ~isempty(plotCfg.ylim), ylim(plotCfg.ylim); end
+        box off; grid on;
     end
 
     sgtitle(analysisName, 'Interpreter', 'none');
     saveas(gcf, fullfile(figdir, [analysisName, '_', metricCfg.metric, '.png']));
     savefig(gcf, fullfile(figdir, [analysisName, '_', metricCfg.metric, '.fig']));
+    allStats.(analysisName) = statsOut;
 end
 
-function plot_one_panel(stat, plotCfg, featName)
-    x = stat.times;
-    y = stat.mean;
-    e = stat.sem;
+%% Maintenance-period summary: side evidence vs controlled load evidence
+summaryCfg = struct();
+summaryCfg.timeWin = [250 inf];   % edit this to your preferred maintenance window
+summaryCfg.sideAnalysis = 'sideDecoding';
+summaryCfg.loadAnalysis = 'loadSideBalanced';
+summaryCfg.metricCfg = metricCfg;
 
-    patch([x, fliplr(x)], [y+e, fliplr(y-e)], [0.5 0.5 0.5], ...
-        'FaceAlpha', 0.2, 'EdgeColor', 'none');
-    plot(x, y, 'k', 'LineWidth', 2);
-    yline(0, ':k');
+summaryMap = struct();
+summaryMap(1).label = 'CDA / voltage lateralization';
+summaryMap(1).sideFeature = 'VoltageLminusR';
+summaryMap(1).loadFeature = 'CDA';
+summaryMap(2).label = 'Lateralized alpha';
+summaryMap(2).sideFeature = 'AlphaLminusR';
+summaryMap(2).loadFeature = 'Alpha';
+summaryMap(3).label = 'Global alpha mean';
+summaryMap(3).sideFeature = 'GlobalAlphaMean';
+summaryMap(3).loadFeature = 'GlobalAlphaMean';
+summaryMap(4).label = 'Global alpha topography';
+summaryMap(4).sideFeature = 'AlphaRawLR';
+summaryMap(4).loadFeature = 'GlobalAlpha';
 
-    for li = 1:numel(plotCfg.eventLines)
-        xline(plotCfg.eventLines(li), '--k');
-    end
+n = numel(summaryMap);
+labels = strings(n,1);
+sideMean = nan(n,1);
+loadMean = nan(n,1);
+sideSEM = nan(n,1);
+loadSEM = nan(n,1);
 
-    yl = ylim;
-    yBar = yl(1) + 0.05 * range(yl);
-    for ci = 1:numel(stat.significantClusters)
-        idx = stat.significantClusters(ci).idx;
-        plot(x(idx), yBar * ones(size(idx)), 'k-', 'LineWidth', 4);
-    end
+for i = 1:n
+    labels(i) = string(summaryMap(i).label);
 
-    title(featName, 'Interpreter', 'none');
-    xlabel('Time (ms)');
-    ylabel(plotCfg.ylabel);
-    if ~isempty(plotCfg.xlim), xlim(plotCfg.xlim); end
-    if ~isempty(plotCfg.ylim), ylim(plotCfg.ylim); end
-    box off; grid on;
+    sideDir = fullfile(rootdir, summaryCfg.sideAnalysis, summaryMap(i).sideFeature);
+    loadDir = fullfile(rootdir, summaryCfg.loadAnalysis, summaryMap(i).loadFeature);
+
+    [sideData, sideTimes] = extract_decoding_timeseries(sideDir, summaryCfg.metricCfg);
+    [loadData, loadTimes] = extract_decoding_timeseries(loadDir, summaryCfg.metricCfg);
+
+    sideIdx = sideTimes >= summaryCfg.timeWin(1) & sideTimes <= summaryCfg.timeWin(2);
+    loadIdx = loadTimes >= summaryCfg.timeWin(1) & loadTimes <= summaryCfg.timeWin(2);
+
+    sideSubj = mean(sideData(:, sideIdx), 2, 'omitnan');
+    loadSubj = mean(loadData(:, loadIdx), 2, 'omitnan');
+
+    sideMean(i) = mean(sideSubj, 'omitnan');
+    loadMean(i) = mean(loadSubj, 'omitnan');
+    sideSEM(i) = std(sideSubj, 0, 'omitnan') ./ sqrt(sum(~isnan(sideSubj)));
+    loadSEM(i) = std(loadSubj, 0, 'omitnan') ./ sqrt(sum(~isnan(loadSubj)));
 end
 
-function summaryTable = plot_selectivity_summary(rootdir, summaryMap, summaryCfg, figdir)
-    n = numel(summaryMap);
-    labels = strings(n,1);
-    sideMean = nan(n,1);
-    loadMean = nan(n,1);
-    sideSEM = nan(n,1);
-    loadSEM = nan(n,1);
+summaryTable = table(labels, sideMean, sideSEM, loadMean, loadSEM);
 
-    for i = 1:n
-        labels(i) = string(summaryMap(i).label);
-
-        sideDir = fullfile(rootdir, summaryCfg.sideAnalysis, summaryMap(i).sideFeature);
-        loadDir = fullfile(rootdir, summaryCfg.loadAnalysis, summaryMap(i).loadFeature);
-
-        [sideData, sideTimes] = extract_decoding_timeseries(sideDir, summaryCfg.metricCfg);
-        [loadData, loadTimes] = extract_decoding_timeseries(loadDir, summaryCfg.metricCfg);
-
-        sideIdx = sideTimes >= summaryCfg.timeWin(1) & sideTimes <= summaryCfg.timeWin(2);
-        loadIdx = loadTimes >= summaryCfg.timeWin(1) & loadTimes <= summaryCfg.timeWin(2);
-
-        sideSubj = mean(sideData(:, sideIdx), 2, 'omitnan');
-        loadSubj = mean(loadData(:, loadIdx), 2, 'omitnan');
-
-        sideMean(i) = mean(sideSubj, 'omitnan');
-        loadMean(i) = mean(loadSubj, 'omitnan');
-        sideSEM(i) = std(sideSubj, 0, 'omitnan') ./ sqrt(sum(~isnan(sideSubj)));
-        loadSEM(i) = std(loadSubj, 0, 'omitnan') ./ sqrt(sum(~isnan(loadSubj)));
-    end
-
-    summaryTable = table(labels, sideMean, sideSEM, loadMean, loadSEM);
-
-    figure('Color', 'w', 'Position', [120 120 700 550]); hold on;
-    errorbar(sideMean, loadMean, loadSEM, loadSEM, sideSEM, sideSEM, 'o', ...
-        'LineWidth', 1.5, 'MarkerSize', 7);
-    xline(0, ':k'); yline(0, ':k');
-    for i = 1:n
-        text(sideMean(i), loadMean(i), ['  ', char(labels(i))], 'Interpreter', 'none');
-    end
-    xlabel(['Side evidence: ', summaryCfg.metricCfg.metric]);
-    ylabel(['Controlled load evidence: ', summaryCfg.metricCfg.metric]);
-    title(sprintf('Maintenance summary: %d-%d ms', summaryCfg.timeWin(1), summaryCfg.timeWin(2)));
-    box off; grid on;
-
-    saveas(gcf, fullfile(figdir, 'side_vs_controlled_load_summary.png'));
-    savefig(gcf, fullfile(figdir, 'side_vs_controlled_load_summary.fig'));
+figure('Color', 'w', 'Position', [120 120 700 550]); hold on;
+errorbar(sideMean, loadMean, loadSEM, loadSEM, sideSEM, sideSEM, 'o', ...
+    'LineWidth', 1.5, 'MarkerSize', 7);
+xline(0, ':k'); yline(0, ':k');
+for i = 1:n
+    text(sideMean(i), loadMean(i), ['  ', char(labels(i))], 'Interpreter', 'none');
 end
+xlabel(['Side evidence: ', summaryCfg.metricCfg.metric]);
+ylabel(['Controlled load evidence: ', summaryCfg.metricCfg.metric]);
+title(sprintf('Maintenance summary: %d-%d ms', summaryCfg.timeWin(1), summaryCfg.timeWin(2)));
+box off; grid on;
+
+saveas(gcf, fullfile(figdir, 'side_vs_controlled_load_summary.png'));
+savefig(gcf, fullfile(figdir, 'side_vs_controlled_load_summary.fig'));
+save(fullfile(figdir, 'spatial_control_group_stats.mat'), ...
+    'allStats', 'summaryTable', 'subjectInclusion');

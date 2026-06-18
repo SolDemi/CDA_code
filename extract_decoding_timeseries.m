@@ -22,13 +22,24 @@ function [dataMat, times, usedFiles] = extract_decoding_timeseries(resultDir, cf
 %   cfg.filePattern   : default = '*.mat'
 %   cfg.resultVarName : optional exact variable name inside .mat file
 %   cfg.times         : fallback time vector when the result struct has no .times field
+%   cfg.includeSubjectIds : optional numeric subject ids to include
+%   cfg.excludeSubjectIds : optional numeric subject ids to exclude
+%   cfg.silentMissingMetric : suppress per-file warnings for missing metric fields
 
 if nargin < 2 || isempty(cfg)
     cfg = struct();
 end
-cfg = fill_default_cfg(cfg);
+if ~isfield(cfg, 'metric'),        cfg.metric = 'AUC'; end
+if ~isfield(cfg, 'useDiagonal'),   cfg.useDiagonal = true; end
+if ~isfield(cfg, 'filePattern'),   cfg.filePattern = '*.mat'; end
+if ~isfield(cfg, 'resultVarName'), cfg.resultVarName = ''; end
+if ~isfield(cfg, 'times'),         cfg.times = []; end
+if ~isfield(cfg, 'includeSubjectIds'), cfg.includeSubjectIds = []; end
+if ~isfield(cfg, 'excludeSubjectIds'), cfg.excludeSubjectIds = []; end
+if ~isfield(cfg, 'silentMissingMetric'), cfg.silentMissingMetric = false; end
 
 files = dir(fullfile(resultDir, cfg.filePattern));
+files = filter_subject_files(files, cfg.includeSubjectIds, cfg.excludeSubjectIds);
 if isempty(files)
     error('No files matched %s in %s.', cfg.filePattern, resultDir);
 end
@@ -40,10 +51,27 @@ usedFiles = {};
 for fi = 1:numel(files)
     fpath = fullfile(files(fi).folder, files(fi).name);
     S = load(fpath);
-    R = pick_result_struct(S, cfg);
+    R = [];
+    if ~isempty(cfg.resultVarName) && isfield(S, cfg.resultVarName)
+        if isstruct(S.(cfg.resultVarName)) && isfield(S.(cfg.resultVarName), cfg.metric)
+            R = S.(cfg.resultVarName);
+        end
+    end
 
     if isempty(R)
-        warning('Skipping %s: no result struct with field %s.', files(fi).name, cfg.metric);
+        fn = fieldnames(S);
+        for ri = 1:numel(fn)
+            if isstruct(S.(fn{ri})) && isfield(S.(fn{ri}), cfg.metric)
+                R = S.(fn{ri});
+                break;
+            end
+        end
+    end
+
+    if isempty(R)
+        if ~cfg.silentMissingMetric
+            warning('Skipping %s: no result struct with field %s.', files(fi).name, cfg.metric);
+        end
         continue;
     end
 
@@ -80,33 +108,4 @@ if isempty(dataRows)
 end
 
 dataMat = vertcat(dataRows{:});
-end
-
-%% ========================================================================
-function cfg = fill_default_cfg(cfg)
-if ~isfield(cfg, 'metric'),        cfg.metric = 'AUC'; end
-if ~isfield(cfg, 'useDiagonal'),   cfg.useDiagonal = true; end
-if ~isfield(cfg, 'filePattern'),   cfg.filePattern = '*.mat'; end
-if ~isfield(cfg, 'resultVarName'), cfg.resultVarName = ''; end
-if ~isfield(cfg, 'times'),         cfg.times = []; end
-end
-
-%% ========================================================================
-function R = pick_result_struct(S, cfg)
-R = [];
-
-if ~isempty(cfg.resultVarName) && isfield(S, cfg.resultVarName)
-    if isstruct(S.(cfg.resultVarName)) && isfield(S.(cfg.resultVarName), cfg.metric)
-        R = S.(cfg.resultVarName);
-        return;
-    end
-end
-
-fn = fieldnames(S);
-for i = 1:numel(fn)
-    if isstruct(S.(fn{i})) && isfield(S.(fn{i}), cfg.metric)
-        R = S.(fn{i});
-        return;
-    end
-end
 end
