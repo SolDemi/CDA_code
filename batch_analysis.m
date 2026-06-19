@@ -49,6 +49,8 @@ data3_rect_area_alpha_decoding
 data3_letter_color_cross_decoding
 data3_letter_color_cross_plot
 
+data3_segment_state_RSA
+
 % data3: sequential item-state analyses from Wang, Rajsic, & Woodman (2019)
 data3_retention_summary
 data3_build_item_states
