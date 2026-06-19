@@ -1,7 +1,7 @@
 %% process_spatial_control_decoding.m
 % Follow-up analyses for CDA vs Alpha project:
 % 1) side decoding positive control
-% 2) within-side load decoding: setsize1 vs3
+% 2) within-side load decoding: setsize3 vs6
 % 3) side-balanced load decoding
 % 4) cross-side load generalization
 %
@@ -28,7 +28,27 @@ outputdir = fullfile(maindir, 'decoding_LDA_spatialControl');
 %% folders
 % sideFeatures = {'VoltageRawLR', 'AlphaRawLR', 'VoltageLminusR', 'AlphaLminusR', 'GlobalAlphaMean'};
 loadFeatures = {'CDA'}; %, 'Alpha', 'GlobalAlpha', 'NoPCA', 'PCA'};
-analysisNames = {'loadWithinSide_setsize1_vs3'};
+
+loadComparisons(1).analysisName = 'loadWithinSide';
+loadComparisons(1).comparisonName = 'setsize1_vs6';
+loadComparisons(1).classLevels = {'low', 'high'};
+loadComparisons(1).setSizes = [1 6];
+loadComparisons(1).labelMeaning = {'setsize1', 'setsize6'};
+
+loadComparisons(2).analysisName = 'loadWithinSide_setsize1_vs3';
+loadComparisons(2).comparisonName = 'setsize1_vs3';
+loadComparisons(2).classLevels = {'low', 'mid'};
+loadComparisons(2).setSizes = [1 3];
+loadComparisons(2).labelMeaning = {'setsize1', 'setsize3'};
+
+loadComparisons(3).analysisName = 'loadWithinSide_setsize3_vs6';
+loadComparisons(3).comparisonName = 'setsize3_vs6';
+loadComparisons(3).classLevels = {'mid', 'high'};
+loadComparisons(3).setSizes = [3 6];
+loadComparisons(3).labelMeaning = {'setsize3', 'setsize6'};
+
+runComparisonIdx = 3;  % Run only the missing setsize3-vs6 comparison.
+analysisNames = {loadComparisons(runComparisonIdx).analysisName};
 
 for ai = 1:numel(analysisNames)
     if strcmp(analysisNames{ai}, 'sideDecoding')
@@ -88,12 +108,6 @@ sideCfg(2).channel_ipsi   = R_labels;
 sideCfg(2).condLow  = 4;
 sideCfg(2).condMid  = 5;
 sideCfg(2).condHigh = 6;
-
-loadComparisons(1).analysisName = 'loadWithinSide_setsize1_vs3';
-loadComparisons(1).comparisonName = 'setsize1_vs3';
-loadComparisons(1).classLevels = {'low', 'mid'};
-loadComparisons(1).setSizes = [1 3];
-loadComparisons(1).labelMeaning = {'setsize1', 'setsize3'};
 
 %% alpha config
 baselinewindow = [-1400, -1100];
@@ -238,7 +252,7 @@ for s = 1:numel(files)
     % 2) Within-side load decoding
     %    Decode each set-size pair separately within each side, then average.
     % ============================================================
-    for compi = 1:numel(loadComparisons)
+    for compi = runComparisonIdx
         analysisName = loadComparisons(compi).analysisName;
         classLevel1 = loadComparisons(compi).classLevels{1};
         classLevel2 = loadComparisons(compi).classLevels{2};

@@ -12,9 +12,10 @@ addpath(fullfile(codeDir, 'spatial_control_code'));
 
 %% data1: 
 
-% data1: spatial-control analyses
+% data1: run only the missing within-side setsize3-vs6 decoding
 process_spatial_control_decoding
 stat_plot
+data1_setsize_maintenance_comparison
 
 %% data2: rebuild CDA/alpha and decode
 cda_alpha

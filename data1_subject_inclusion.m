@@ -1,5 +1,5 @@
-function [include, info] = data0_subject_inclusion(eegOrArtifactInd, minTrialsPerSetSize)
-%DATA0_SUBJECT_INCLUSION Apply Adam et al. Experiment 1 exclusion rule.
+function [include, info] = data1_subject_inclusion(eegOrArtifactInd, minTrialsPerSetSize)
+%DATA1_SUBJECT_INCLUSION Apply Adam et al. Experiment 1 exclusion rule.
 %
 % Participants are included only if they have at least 75 artifact-free
 % trials in every set-size condition after artifact rejection. In the saved
@@ -20,7 +20,7 @@ if size(artifactInd, 1) ~= 6 && size(artifactInd, 2) == 6
     artifactInd = artifactInd';
 end
 if size(artifactInd, 1) < 6
-    error('data0 artifactInd must contain 6 conditions.');
+    error('data1 artifactInd must contain 6 conditions.');
 end
 
 setSizeConditionPairs = [1 4; 2 5; 3 6];
@@ -35,7 +35,7 @@ end
 include = all(trialCounts >= minTrialsPerSetSize);
 
 info = struct();
-info.dataset = 'data0';
+info.dataset = 'data1';
 info.source = 'Adam et al. Experiment 1';
 info.criterion = '>=75 artifact-free trials in every set-size condition';
 info.minTrialsPerSetSize = minTrialsPerSetSize;
